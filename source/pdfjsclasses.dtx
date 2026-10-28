@@ -731,7 +731,11 @@
 \else
   \def\pdfj@jfm{pdftexja-jfm-ujis}%
 \fi\fi
-%<kiyou>\def\pdfj@jascale{0.9769230}
+% kiyou の拡大率 .9769230 は \pdfj@mpt（\f@size 側）に既に入っており、
+% ja-scale は JS 共通の .924715 を渡す。ここで .9769230 を渡すと二重
+% スケールになり \zw=9.54388pt（正解 9.03378pt=基準 9.769pt×.924715）
+% となって 1 行に 1 セル余分に入る（実測）。
+%<kiyou>\def\pdfj@jascale{0.924715}
 %<jspf>\def\pdfj@jascale{0.903375}
 %<!kiyou&!jspf>\def\pdfj@jascale{0.924715}
 \ifpdfj@disablejfam

@@ -240,7 +240,7 @@
 \else
   \def\pdfj@jfm{pdftexja-jfm-ujis}%
 \fi\fi
-\def\pdfj@jascale{0.9769230}
+\def\pdfj@jascale{0.924715}
 \ifpdfj@disablejfam
   \pdfjclass@addextra{math=false}%
   \pdfjclass@addextra{math-capture=false}%
