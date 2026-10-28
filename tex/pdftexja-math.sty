@@ -23,34 +23,24 @@
 
 % ------------------------------------------------ math text registry
 % Wrapper registry for the raw-primitive-box check: a \hbox/\vbox/\vtop/
-% \vcenter directly at the captured formula level is an error, but the
+% \vcenter at brace depth 0 of the captured formula is an error, but the
 % argument of a registered text wrapper is exempt.
-% Membership is a pre-computed flag plus \ifx comparisons: a \csname-keyed
-% table cannot be used here because the walk also sees the active UTF-8
-% byte macros of always-on CJK (\string would leave the rest of the byte
-% sequence inside the name scan), and the dispatch must not interleave
-% conditionals with the caller's branch bodies.
+%
+% Registration APPENDS one self-contained \ifx test per wrapper to a stored
+% token list; each test compares the registered command with the walker's
+% \futurelet copy \pdftexja@math@raw@nt of the token under inspection, so no
+% inspected token is ever handed to \csname or \string (the walk also sees
+% the active UTF-8 byte macros of always-on CJK, and a \string of those
+% leaves the rest of the byte sequence inside the name scan: "Missing
+% \endcsname inserted <to be read again> \global") and no conditional is left
+% open across a token boundary.  The appended tests are flat: each one opens
+% and closes its own \ifx.
 \newif\ifpdftexja@mathtext@hit
-\def\pdftexja@mathtext@extra{}
+\def\pdftexja@mathtext@tests{}
 \def\pdftexjaDeclareMathTextCommand#1{%
-  \ifx\pdftexja@mathtext@extra\@empty
-    \edef\pdftexja@mathtext@extra{\string#1}%
-  \else
-    \edef\pdftexja@mathtext@extra{\pdftexja@mathtext@extra,\string#1}%
-  \fi}
-\def\pdftexja@ifmathtextcommand#1#2#3{%
-  \pdftexja@mathtext@hitfalse
-  \ifdefined\mathmc \expandafter\ifx\mathmc#1\pdftexja@mathtext@hittrue\fi \fi
-  \ifdefined\mathgt \expandafter\ifx\mathgt#1\pdftexja@mathtext@hittrue\fi \fi
-  \expandafter\ifx\mbox#1\pdftexja@mathtext@hittrue\fi
-  \expandafter\ifx\makebox#1\pdftexja@mathtext@hittrue\fi
-  \ifdefined\text \expandafter\ifx\text#1\pdftexja@mathtext@hittrue\fi \fi
-  \ifx\pdftexja@mathtext@extra\@empty
-  \else
-    \@for\pdftexja@w:=\pdftexja@mathtext@extra\do{%
-      \expandafter\ifx\pdftexja@w#1\pdftexja@mathtext@hittrue\fi}%
-  \fi
-  \ifpdftexja@mathtext@hit #2\else #3\fi}
+  \expandafter\def\expandafter\pdftexja@mathtext@tests\expandafter{%
+    \pdftexja@mathtext@tests
+    \ifx#1\pdftexja@math@raw@nt\pdftexja@mathtext@hittrue\fi}}
 \pdftexjaDeclareMathTextCommand{\mbox}
 \pdftexjaDeclareMathTextCommand{\makebox}
 % \text is registered when amstext/amsmath has defined it (both load
@@ -421,32 +411,71 @@
     \pdftexja@dollar@plain\relax#1\pdftexja@dollar@plain
   \fi
 }
-% 簡易 raw 検査（\( 経路: トークンレベル・wrapper 引数は透過扱い）
-\def\pdftexja@math@rawcheck#1{%
-  \def\pdftexja@math@raw@ctx{0}%
-  \pdftexja@math@raw@loop#1\pdftexja@math@raw@stop
-}
+% raw primitive box 検査（$..$ 経路と \(..\) 経路の共通実装）
+%   捕捉本体をトークン単位で走査する単一パス:
+%     - 次のトークンは \futurelet で「覗くだけ」（展開しない）;
+%     - brace グループは丸ごと読み飛ばす（wrapper 引数 = 通常グループで
+%       あり、どちらも契約外）;
+%     - 通常トークンの消費は \let 代入で行う（\def 引数で消費すると
+%       TeX が前後の空白を読み飛ばし、空白直後のトークンが検査されずに
+%       消える）;
+%     - 分岐はすべて \let ディスパッチの手前で閉じる。したがって条件が
+%       トークン境界をまたぐことはなく、走査中に本体のマクロが展開される
+%       こともない（active UTF-8 byte マクロも 1 トークンとして扱える）。
+%   判定は「\hbox/\vbox/\vtop/\vcenter か」だけを \ifx（= 意味の比較）で
+%   行う。\csname・\string・\@for は使わない。
+\newcount\pdftexja@math@raw@ctx
 \def\pdftexja@math@raw@stop{\pdftexja@math@raw@stop}
-\def\pdftexja@math@raw@loop#1{%
-  \ifx\pdftexja@math@raw@stop#1%
+\def\pdftexja@math@rawcheck#1{%
+  \pdftexja@math@raw@ctx=\z@
+  \pdftexja@math@raw@scan#1\pdftexja@math@raw@stop}
+\def\pdftexja@math@raw@scan{%
+  \futurelet\pdftexja@math@raw@nt\pdftexja@math@raw@step}
+\def\pdftexja@math@raw@step{%
+  \ifx\pdftexja@math@raw@nt\pdftexja@math@raw@stop
+    \let\pdftexja@math@raw@next\pdftexja@math@raw@finish
+  \else\ifx\pdftexja@math@raw@nt\bgroup
+    \let\pdftexja@math@raw@next\pdftexja@math@raw@skipgroup
   \else
-    \pdftexja@math@raw@one{#1}%
-    \expandafter\pdftexja@math@raw@loop
-  \fi}
-\def\pdftexja@math@raw@one#1{%
-  \pdftexja@ifmathtextcommand{#1}%
-    {\def\pdftexja@math@raw@ctx{1}}%
-    {\ifx\makebox#1\def\pdftexja@math@raw@ctx{2}%
-     \else
-       \ifnum\pdftexja@math@raw@ctx=\z@
-         \ifx\hbox#1\pdftexja@math@rawerr{hbox}%
-         \else\ifx\vbox#1\pdftexja@math@rawerr{vbox}%
-         \else\ifx\vtop#1\pdftexja@math@rawerr{vtop}%
-         \else\ifx\vcenter#1\pdftexja@math@rawerr{vcenter}%
-         \fi\fi\fi\fi
-       \fi
-       \def\pdftexja@math@raw@ctx{0}%
-     \fi}}
+    \let\pdftexja@math@raw@next\pdftexja@math@raw@eatone
+  \fi\fi
+  \pdftexja@math@raw@next}
+% 終端: \futurelet は消費しないため、終端トークンをここで食べる
+\def\pdftexja@math@raw@finish#1{}
+% brace グループは丸ごと読み飛ばす
+\long\def\pdftexja@math@raw@skipgroup#1{%
+  \pdftexja@math@raw@ctx=\z@
+  \pdftexja@math@raw@scan}
+% 空白列 + 1 トークンを \let で消費し、その意味を \nt に載せる
+\def\pdftexja@math@raw@eatone{%
+  \afterassignment\pdftexja@math@raw@aftertoken
+  \let\pdftexja@math@raw@nt= }
+\def\pdftexja@math@raw@aftertoken{%
+  \let\pdftexja@math@raw@next\pdftexja@math@raw@scan
+  \ifx\pdftexja@math@raw@nt\pdftexja@math@raw@stop
+    % 終端は消費済み（空白列の後ろにあった場合）
+    \let\pdftexja@math@raw@next\relax
+  \else\ifx\pdftexja@math@raw@nt\bgroup
+    % 消費した `{' を戻し、グループ読み飛ばしに渡す
+    \let\pdftexja@math@raw@next\pdftexja@math@raw@restoregroup
+  \else
+    \pdftexja@mathtext@hitfalse
+    \pdftexja@mathtext@tests
+    \ifpdftexja@mathtext@hit
+      % 登録済み text wrapper: 直後の引数トークンを免除する
+      \pdftexja@math@raw@ctx=\@ne
+    \else
+      \ifnum\pdftexja@math@raw@ctx=\z@
+        \ifx\hbox\pdftexja@math@raw@nt\pdftexja@math@rawerr{hbox}\fi
+        \ifx\vbox\pdftexja@math@raw@nt\pdftexja@math@rawerr{vbox}\fi
+        \ifx\vtop\pdftexja@math@raw@nt\pdftexja@math@rawerr{vtop}\fi
+        \ifx\vcenter\pdftexja@math@raw@nt\pdftexja@math@rawerr{vcenter}\fi
+      \fi
+      \pdftexja@math@raw@ctx=\z@
+    \fi
+  \fi\fi
+  \pdftexja@math@raw@next}
+\def\pdftexja@math@raw@restoregroup{\bgroup\pdftexja@math@raw@scan}
 \newcount\pdftexja@math@rawerrcnt
 \def\pdftexja@math@rawerr#1{%
   \global\advance\pdftexja@math@rawerrcnt\@ne
@@ -620,10 +649,11 @@
           \csname pdftexja@mathalpha@fam@\string#1\endcsname}%
         ##1%
       \endgroup}%
-    % the public command: original alphabet, JA-only switch inside;
-    % \protected keeps moving arguments safe (the original is robust)
-    \expandafter\cs_set_protected:Npn
-      \csname\expandafter\@gobble\string#1\endcsname##1{%
+    % the public command: original alphabet, JA-only switch inside.
+    % \protected keeps moving arguments safe (the original is robust).
+    % Plain \protected\def through \csname: this file is not inside
+    % \ExplSyntaxOn, so expl3's \cs_set_protected:Npn is not available here.
+    \protected\expandafter\def\csname\expandafter\@gobble\string#1\endcsname##1{%
         \csname pdftexja@mathalpha@orig@\string#1\endcsname
           {\csname pdftexja@mathalpha@do@\string#1\endcsname{##1}}}%
     \expandafter\pdftexja@mathalpha@do
