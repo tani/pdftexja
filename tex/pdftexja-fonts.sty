@@ -43,6 +43,12 @@
 % rules; CJKpunct's quanjiao kerning would double-apply.
 % \pdfstrcmp compares the whole expansion byte-wise (a plain \ifx on a
 % macro-to-char-tokens would compare only the first token pair).
+% The ordinary glyph advance is CJK's: bxcjkjatype reads \Cjascale ONCE at
+% load time into \bxjy@scale and cannot track later changes.  Expose ja-scale
+% through that documented knob FIRST, so the glyph advance and the \zw unit
+% are the same quantity from the start (plan §6.3).  A ja-scale change after
+% this load still needs the at-S glyph seam, which remains open (see PLAN.md).
+\edef\Cjascale{\pdftexja@opt@jascale}%
 \ifnum\pdfstrcmp{\pdftexja@opt@fontset}{custom}=0 \relax
   \RequirePackage[noCJKpunct]{bxcjkjatype}%
 \else\ifnum\pdfstrcmp{\pdftexja@opt@fontset}{haranoaji}=0 \relax
