@@ -15,8 +15,10 @@
 # MediaBox, extracted Unicode text (whitespace-insensitive, glyph-level
 # ToUnicode), line-breaking decisions, baseline pitch and block structure.
 # Additionally the layout numbers each class computes itself are compared
-# verbatim (GEOM: line in the log), which is the class-level "same quality"
-# contract and is independent of the font outlines in use.
+# numerically (GEOM: line in the log, tw/th/bs/pi/cs within 0.03 pt), which
+# is the class-level "same quality" contract and is independent of the font
+# outlines in use.  The values are parsed as numbers: the label (`tw=') and
+# the unit (`pt') are stripped before awk sees them.
 #
 # Exit: 0 all class pairs pass, 1 any failure, 2 usage/installation error.
 
@@ -132,17 +134,26 @@ while read -r ours ref tate extra; do
     echo "FAIL: $ours: GEOM probe missing (ours='$ga' ref='$gb')"
     FAILED=$((FAILED + 1)); continue
   fi
+  # The GEOM text is `tw=<len>pt:th=<len>pt:bs=<len>pt:pi=<len>pt:cs=<len>pt`.
+  # Split on `:' first, then strip the `key=' label and the `pt' unit; only
+  # the remaining number is numeric.  (The old code fed `tw=322.0' to awk,
+  # which scans as 0, making every comparison trivially true.)
   geom_ok=1
-  IFS=':' read -r twa tha bsa pia csa <<EOF
-$ga
-EOF
-  IFS=':' read -r twb thb bsb pib csb <<EOF
-$gb
-EOF
-  for pair in "$twa $twb" "$tha $thb" "$bsa $bsb" "$pia $pib"; do
-    set -- $pair
-    awk -v a="${1%pt}" -v b="${2%pt}" \
-      'BEGIN { d = a - b; if (d < 0) d = -d; exit (d > 0.03) }' || geom_ok=0
+  for key in tw th bs pi cs; do
+    va=$(printf '%s\n' "$ga" | tr ':' '\n' |
+         sed -n "s/^${key}=\(.*\)pt\$/\1/p")
+    vb=$(printf '%s\n' "$gb" | tr ':' '\n' |
+         sed -n "s/^${key}=\(.*\)pt\$/\1/p")
+    if [ -z "$va" ] || [ -z "$vb" ]; then
+      echo "FAIL: $ours: GEOM field '$key' missing (ours='$ga' ref='$gb')"
+      geom_ok=0; break
+    fi
+    # Tolerance: PLAN.md verification, class geometry 0.03 pt.
+    if ! awk -v a="$va" -v b="$vb" -v k="$key" \
+        'BEGIN { d = a - b; if (d < 0) d = -d
+                 if (d > 0.03) { printf "GEOM DIFF %s ours=%.5f ref=%.5f delta=%.5f\n", k, a, b, d; exit 1 } }'; then
+      geom_ok=0
+    fi
   done
   if [ "$geom_ok" = 1 ]; then
     echo "PASS: $ours: class geometry matches $ref ($ga)"

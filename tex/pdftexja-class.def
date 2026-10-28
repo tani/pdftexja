@@ -135,8 +135,14 @@
 % dimensions of the named direction scaled by the current Japanese size
 % are read with \pdftexjaGetMetrics, then \Chs and \Cvs are set the way
 % the original did.  No box-0 measurement is performed.
+% \pdftexjaGetMetrics takes <wd> <ht> <dp> (the JFM class {w}{h}{d});
+% \hbox{漢}'s \wd is \Cwd, its \ht is \Cht and its \dp is \Cdp.  Passing
+% {\Cht}{\Cdp}{\Cwd} permuted the three: \Cwd became d (0.12\zw yoko,
+% 0.5\zw tate) instead of the advance w (1\zw), and \Cht became w
+% instead of h.  That halved the tate textwidth and broke the yoko
+% topskip/textheight by 1pt.
 \def\pdfjclass@snapshot#1{%
-  \pdftexjaGetMetrics{#1}{\Cht}{\Cdp}{\Cwd}%
+  \pdftexjaGetMetrics{#1}{\Cwd}{\Cht}{\Cdp}%
   \Chs=\Cwd
   \Cvs=\baselineskip}
 % tate classes: the rotated galley loses (topskip - Cdp) of leading;
