@@ -1,0 +1,446 @@
+%%
+%% This is file 'pdftexja-latex.sty'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (jlreq.cls UTF-8 command
+%% dispatch, Japanese reference keys, unit normalization) and from
+%% jlreq-pdftex.sty (kanji numerals).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% LaTeX-layer service:
+%%   - \kansuji (pTeX-compatible digit substitution)
+%%   - \pdftexjaNormalizeUnits: literal zw/zh/Q/H after a digit
+%%   - \pdftexjaDeclareUTFCommand: Japanese control-sequence spellings
+%%   - Japanese reference keys: label/write/read/query normalization and
+%%     the nameref/hyperref/refcount/cleveref adaptations
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pdftexja-latex}[2026/10/28 v0.1 pdftexja LaTeX layer]
+
+\makeatletter
+
+%. ------------------------------------------- kanji numerals (\kansuji)
+% pTeXの\kansujiに相当するプリミティブはpdfTeXには無い．uplatex/platexでの
+% 実測（0–1000000をtypeout照合）により，pTeXの仕様は「十進の各桁を
+% 〇一二三四五六七八九に置き換える」桁置換であり（10→一〇，100→一〇〇，
+% 2025→二〇二五），十・百・千の位取りは行わない．0→〇，負数→空．
+% これを完全展開可能なマクロで再現する．
+%
+% always-on CJK下では和文リテラル（UTF-8活字化バイト列）を\edefや素の
+% \writeで展開するとCJK内部の条件分岐（\CJK@XXX）が破綻するため，字形
+% への置換は組版時まで遅延させる設計:
+%  * \pdftexja@kjczero..\pdftexja@kjcnine : 各桁の生文字マクロ（UTF-8リテラル）．
+%  * \pdftexja@kansuji@digit{<d>} : 1桁印字．\protectedなので\edef/\write/
+%    \mark/\typeoutのすべてで凍結され，TOC・柱・見出しラベルを安全に
+%    通過する（組版時に展開されて生文字を出力）．
+%  * \pdftexja@kansuji{<num>} : 完全展開可能．<num>は\numexpr式または
+%    単一トークン（\c@chapter等）．展開結果は\pdftexja@kansuji@digitの列．
+%    jlreq.clsの\pdftexja@Kanji（d側）からカウンタ名経由で呼ばれる．
+%  * \pdftexja@kansuji@run{<printer>}{<num>} : プリンタ差替口．テストが
+%    \detokenize系プリンタを渡してログ照合に用いる．
+\def\pdftexja@kjczero{〇}
+\def\pdftexja@kjcone{一}
+\def\pdftexja@kjctwo{二}
+\def\pdftexja@kjcthree{三}
+\def\pdftexja@kjcfour{四}
+\def\pdftexja@kjcfive{五}
+\def\pdftexja@kjcsix{六}
+\def\pdftexja@kjcseven{七}
+\def\pdftexja@kjceight{八}
+\def\pdftexja@kjcnine{九}
+\protected\def\pdftexja@kansuji@digit#1{%
+  \ifcase#1 \pdftexja@kjczero\or \pdftexja@kjcone\or \pdftexja@kjctwo\or \pdftexja@kjcthree\or
+    \pdftexja@kjcfour\or \pdftexja@kjcfive\or \pdftexja@kjcsix\or \pdftexja@kjcseven\or
+    \pdftexja@kjceight\or \pdftexja@kjcnine\fi}
+\def\pdftexja@kansuji#1{\pdftexja@kansuji@run\pdftexja@kansuji@digit{#1}}
+\def\pdftexja@kansuji@run#1#2{%
+  \expandafter\pdftexja@kansuji@norm\expandafter#1\expandafter{\the\numexpr#2\relax}}
+% #1=プリンタ，#2=符号付き10進文字列（\the\numexpr済み）．負数は空．
+\def\pdftexja@kansuji@norm#1#2{%
+  \ifnum#2<\z@\else\pdftexja@kansuji@loop#1#2\pdftexja@kansuji@stop\fi}
+% 再帰呼出しは \expandafter で自身の \fi を先に閉じる（さもないと次桁ではなく
+% \fi が #2 として拾われて無限再帰になる，定番の罠）．
+\def\pdftexja@kansuji@loop#1#2{%
+  \ifx#2\pdftexja@kansuji@stop
+  \else
+    #1{#2}%
+    \expandafter\pdftexja@kansuji@loop\expandafter#1%
+  \fi}
+\def\pdftexja@kansuji@stop{\pdftexja@kansuji@stop}
+
+% public entry: \kansuji{<number>} (pTeX-compatible digit substitution)
+\def\kansuji#1{\pdftexja@kansuji{#1}}
+
+
+%. ------------------------------------------------- unit normalization
+% \pdftexjaNormalizeUnits{<expl3 tl variable>}: replace a literal zw/zh
+% immediately after a digit with the unit macro, and Q/H with
+% 0.25mm. Digits not followed by a unit and unit letters that are part
+% of a macro name are untouched. The caller's tl is updated in place.
+\def\pdftexjaNormalizeUnits#1{%
+  \pdftexja@normalize@tl{#1}%
+}
+\def\pdftexja@normalize@tl#1{%
+  \tl_set:Nx #1 {#1}%
+  \pdftexja@normalize@units{#1}%
+}
+\def\pdftexja@normalize@units#1{%
+  \tl_map_inline:nn {0123456789} {%
+    \tl_replace_all:Nnn #1 {##1 zw} {##1\zw}%
+    \tl_replace_all:Nnn #1 {##1 zh} {##1\zh}%
+    \tl_replace_all:Nnn #1 {##1 Q} {##1\dimexpr 0.25mm\relax}%
+    \tl_replace_all:Nnn #1 {##1 H} {##1\dimexpr 0.25mm\relax}%
+  }%
+}
+
+%. --------------------------------------------- UTF-8 command spellings
+% A Japanese control sequence `\<first byte><rest bytes>' is a control
+% symbol named by the FIRST byte only (8-bit engines cannot name a CS
+% with several bytes). The dispatcher consumes exactly the registered
+% byte run and replaces it with a stable protected ASCII command.
+%
+% Candidates are stored per leading byte as
+%   \pdftexja@utf@c{<rest tokens>}{<target>}
+% and the dispatch walks the input with a one-token filter: candidates
+% whose next token matches survive (with that token stripped), the rest
+% are dropped. Several spellings sharing a leading byte are therefore
+% handled; a spelling that is a strict prefix of another is rejected at
+% dispatch (ambiguous spelling) because TeX cannot push back tokens.
+\def\pdftexja@utf@c#1#2{}
+\def\pdftexja@utf@c@stop{\pdftexja@utf@c@stop}
+\def\pdftexja@utf@end{\pdftexja@utf@end}
+
+% public registration (preamble only)
+\def\pdftexjaDeclareUTFCommand#1#2{%
+  \pdftexja@preambleonly{\pdftexjaDeclareUTFCommand}%
+  \def\pdftexja@utf@spell{#1}%
+  \ifx\pdftexja@utf@spell\@empty
+    \PackageError{pdftexja}{empty UTF command spelling}{%
+      A~command~spelling~must~contain~at~least~one~UTF-8~byte.\MessageBreak
+      \@ehc}%
+  \else
+    \pdftexja@utf@split#1\pdftexja@utf@end{#2}%
+  \fi}
+% #1 = first byte, #2 = remaining spelling tokens, #3 = target
+\def\pdftexja@utf@split#1#2\pdftexja@utf@end#3{%
+  \def\pdftexja@utf@rest{#2}%
+  \ifx\pdftexja@utf@rest\@empty
+    \PackageError{pdftexja}{UTF command spelling must be multi-byte}{%
+      The~registered~spelling~has~a~single~byte;~a~one-byte~control\MessageBreak
+      symbol~cannot~be~dispatched~safely~on~this~engine.\MessageBreak
+      \@ehc}%
+  \else
+    \ifcat\noexpand#3\relax
+      \pdftexja@utf@register{#1}{#2}{#3}%
+    \else
+      \PackageError{pdftexja}{UTF command target must be a single control sequence}{%
+        The~second~argument~of~\string\pdftexjaDeclareUTFCommand\space\MessageBreak
+        must~be~one~control~sequence.\MessageBreak
+        \@ehc}%
+    \fi
+  \fi}
+\def\pdftexja@utf@register#1#2#3{%
+  \edef\pdftexja@utf@byte{\string#1}%
+  \edef\pdftexja@utf@key{\detokenize{#1#2}}%
+  \expandafter\ifx\csname pdftexja@utf@declared@\pdftexja@utf@key\endcsname\relax
+    \expandafter\def\csname pdftexja@utf@declared@\pdftexja@utf@key\endcsname{1}%
+    % the control symbol for this leading byte (defined once; later
+    % registrations only append to the candidate list)
+    \expandafter\ifx\csname pdftexja@utf@cands@\pdftexja@utf@byte\endcsname\relax
+      \expandafter\def\csname pdftexja@utf@cands@\pdftexja@utf@byte\endcsname{}%
+      \expandafter\def\csname\pdftexja@utf@byte\endcsname{%
+        \pdftexja@utf@go{#1}}%
+    \fi
+    \pdftexja@utf@appendcand{#2}{#3}%
+  \else
+    \PackageError{pdftexja}{duplicate UTF command spelling}{%
+      The~spelling~is~already~registered.\MessageBreak \@ehc}%
+  \fi}
+\def\pdftexja@utf@appendcand#1#2{%
+  \expandafter\let\expandafter\pdftexja@utf@old
+    \csname pdftexja@utf@cands@\pdftexja@utf@byte\endcsname
+  \toks@\expandafter{\pdftexja@utf@old}%
+  \toks@\expandafter{\the\toks@\pdftexja@utf@c{#1}{#2}}%
+  \expandafter\def\expandafter\pdftexja@utf@newlist\expandafter{\the\toks@}%
+  \expandafter\let\csname pdftexja@utf@cands@\pdftexja@utf@byte\endcsname
+    \pdftexja@utf@newlist}
+% dispatch entry installed as the control symbol body
+\def\pdftexja@utf@go#1{%
+  \expandafter\pdftexja@utf@expandcands
+    \csname pdftexja@utf@cands@\string#1\endcsname}
+\def\pdftexja@utf@expandcands#1{%
+  \expandafter\pdftexja@utf@listgrab#1\pdftexja@utf@c@stop}
+\def\pdftexja@utf@listgrab#1\pdftexja@utf@c@stop{%
+  \def\pdftexja@utf@list{#1}%
+  \pdftexja@utf@choose}
+% pick the head candidate: emit when its remaining spelling is empty and
+% no other candidate is left; otherwise read one more input token.
+\def\pdftexja@utf@choose{%
+  \expandafter\pdftexja@utf@choose@a\pdftexja@utf@list\pdftexja@utf@c@stop}
+\def\pdftexja@utf@choose@a#1#2#3\pdftexja@utf@c@stop{%
+  \pdftexja@utf@choose@b#3\pdftexja@utf@end{#2}}
+\def\pdftexja@utf@choose@b#1#2\pdftexja@utf@end#3{%
+  \def\pdftexja@utf@rest{#3}%
+  \def\pdftexja@utf@more{#2}%
+  \ifx\pdftexja@utf@rest\@empty
+    \ifx\pdftexja@utf@more\@empty
+      #1%
+    \else
+      \PackageError{pdftexja}{ambiguous UTF command spelling}{%
+        A~registered~spelling~is~a~prefix~of~another~with~the~same\MessageBreak
+        leading~byte.~TeX~cannot~push~back~the~extra~tokens.\MessageBreak
+        \@ehc}%
+    \fi
+  \else
+    \expandafter\pdftexja@utf@readnext\fi}
+\def\pdftexja@utf@readnext#1{%
+  \def\pdftexja@utf@tok{#1}%
+  \pdftexja@utf@filter}
+\def\pdftexja@utf@filter{%
+  \let\pdftexja@utf@newlist\@empty
+  \expandafter\pdftexja@utf@filterloop\pdftexja@utf@list\pdftexja@utf@c@stop}
+\def\pdftexja@utf@filterloop#1{%
+  \ifx#1\pdftexja@utf@c@stop
+    \expandafter\pdftexja@utf@filterdone
+  \else
+    \expandafter\pdftexja@utf@filterone
+  \fi}
+\def\pdftexja@utf@filterone#1#2{%
+  \pdftexja@utf@match{#1}{#2}%
+  \pdftexja@utf@filterloop}
+\def\pdftexja@utf@filterdone{%
+  \let\pdftexja@utf@list\pdftexja@utf@newlist
+  \ifx\pdftexja@utf@list\@empty
+    \PackageError{pdftexja}{unknown command spelling}{%
+      The~byte~run~after~the~control~symbol~is~not~a~registered~UTF\MessageBreak
+      command~spelling.~Register~it~with~\string\pdftexjaDeclareUTFCommand.\MessageBreak
+      \@ehc}%
+  \else
+    \pdftexja@utf@choose
+  \fi}
+\def\pdftexja@utf@match#1#2{%
+  \def\pdftexja@utf@rest{#1}%
+  \ifx\pdftexja@utf@rest\@empty
+  \else
+    \pdftexja@utf@match@a#1\pdftexja@utf@end{#2}%
+  \fi}
+\def\pdftexja@utf@match@a#1#2\pdftexja@utf@end#3{%
+  \ifx#1\pdftexja@utf@tok
+    \expandafter\pdftexja@utf@match@yes
+  \else
+    \expandafter\pdftexja@utf@gobble
+  \fi
+  {#2}{#3}}
+\def\pdftexja@utf@match@yes#1#2{%
+  \expandafter\def\expandafter\pdftexja@utf@newlist\expandafter{%
+    \pdftexja@utf@newlist\pdftexja@utf@c{#1}{#2}}}
+\def\pdftexja@utf@gobble#1#2{}
+
+% full-width space spelling (U+3000, e3 80 80): an explicit Japanese
+% space is one zw of glue with the neutral explicit-space boundary state.
+\protected\def\pdftexja@zenkakuspace{%
+  \ifvmode\leavevmode\fi
+  \hskip 1\zw\relax
+  \global\pdftexja@lastclass=93
+  \global\pdftexja@lastnodechar=12288 % U+3000
+}
+\def\pdftexja@zenkakaspace@{\pdftexja@zenkakuspace}
+\pdftexjaDeclareUTFCommand{^^e3^^80^^80}{\pdftexja@zenkakaspace@}
+
+%. ------------------------------- label key normalizer
+% Symmetric normalization of Japanese label keys.  With always-on CJK
+% (active UTF-8 byte macros) a bare key inside \csname r@<key>\endcsname
+% leaks the byte macros' \global/\futurelet and raises "Missing
+% \endcsname".  The CJK byte macros freeze themselves while \protect is
+% \@unexpandable@protect, so: (1) freeze with \protected@edef,
+% (2) normalize catcodes with \detokenize (identity for ASCII keys,
+% byte-preserving for UTF-8).  The result is returned in
+% \pdftexja@labelkey@out.
+\long\def\pdftexja@labelkey#1{%
+  \begingroup
+    \let\protect\@unexpandable@protect
+    \protected@edef\pdftexja@labelkey@res{#1}%
+    \protected@edef\pdftexja@labelkey@res{\detokenize\expandafter{\pdftexja@labelkey@res}}%
+  \expandafter\endgroup
+  \expandafter\def\expandafter\pdftexja@labelkey@out\expandafter{\pdftexja@labelkey@res}%
+}
+\long\def\pdftexja@labelkey@write#1#2{%
+  \protected@write#1{}{#2}%
+}
+
+%. ------------------------------------------------ Japanese reference keys
+% kernel の label/ref 面のうち、key が \csname r@<key>\endcsname に
+% 裸で渡る箇所に同一正規化を挿入する:
+%   * \label（書込）: \protected@write の前に key を正規化
+%   * \newlabel / \@newl@bel（aux 読込）: key を正規化してから
+%     \gdef\csname r@<key> に渡す
+%   * \ref/\pageref（star 両形; \eqref は \ref 経由）: query key を正規化
+% パッケージ面（nameref/hyperref/refcount/cleveref）は begin document 後、
+% 各パッケージの実装を上書きする（kernel 面と同じ正規化器を使用）。
+% 読込側（aux の \newlabel 行）だけは kernel が aux を読む
+% \UseOneTimeHook{begindocument} の「前」に実行されるため、
+% \AtBeginDocument では間に合わない（実測: latex.ltx \document は
+% \@input{\jobname.aux} を begindocument hook より前に置く）。
+% begindocument/before は aux 読込より前に発火する唯一のフック。
+\AddToHook{begindocument/before}{%
+  % --- (2) \newlabel: aux 読込側（key を正規化してから r@<key> を定義）---
+  \def\newlabel#1#2{%
+    \pdftexja@labelkey{#1}%
+    \expandafter\gdef\csname r@\pdftexja@labelkey@out\endcsname{#2}}%
+}
+\AtBeginDocument{%
+  % --- (1) \label: write 側（kernel 定義を正規化版で上書き）---
+  \def\label#1{%
+    \@bsphack
+    \begingroup
+      \UseHookWithArguments{label}{1}{#1}%
+      \pdftexja@labelkey{#1}%
+      \protected@write\@auxout{}%
+         {\string\newlabel{\pdftexja@labelkey@out}{{\@currentlabel}{\thepage}%
+          {\@currentlabelname}{\@currentHref}{\@kernel@reserved@label@data}}}%
+    \endgroup
+    \@esphack}%
+  % --- (3) \ref / \pageref: query 側（star 両形; eqref は \ref 経由）---
+  \renewcommand{\ref}{\@ifstar{\pdftexja@ref@ref@n@s}{\pdftexja@ref@ref@n@ns}}%
+  \renewcommand{\pageref}{\@ifstar{\pdftexja@ref@pageref@n@s}{\pdftexja@ref@pageref@n@ns}}%
+  \newcommand{\pdftexja@ref@ref@n@ns}[1]{\pdftexja@ref@setref{#1}\@firstoffive}%
+  \newcommand{\pdftexja@ref@ref@n@s}[1]{\pdftexja@ref@setref{#1}\@firstoffive}%
+  \newcommand{\pdftexja@ref@pageref@n@ns}[1]{\pdftexja@ref@setref{#1}\@secondoffive}%
+  \newcommand{\pdftexja@ref@pageref@n@s}[1]{\pdftexja@ref@setref{#1}\@secondoffive}%
+  % \pdftexja@ref@setref{<raw key>}{<selector>}: kernel \@setref と同一の二段構成。
+  % 第一段: \csname r@<正規化key> を先に展開して「cs トークン」を作り、
+  % 第二段（\pdftexja@ref@setref@i）で \expandafter#2#1 の形でその中身を
+  % selector に渡す（kernel \setref の "\expandafter#2#1\@empty.." と同じ）。
+  \newcommand{\pdftexja@ref@setref}[2]{%
+    \pdftexja@labelkey{#1}%
+    \expandafter\pdftexja@ref@setref@i
+      \csname r@\pdftexja@labelkey@out\endcsname{#2}{#1}}%
+  \newcommand{\pdftexja@ref@setref@i}[3]{%
+    \ifx#1\relax
+      \protect\G@refundefinedtrue
+      \nfss@text{\reset@font\bfseries ??}%
+      \@latex@warning{Reference `#3' on page \thepage \space undefined}%
+    \else
+      \expandafter#2#1\@empty\@empty\@empty\null
+    \fi}%
+}
+  % --- (4) パッケージ面（nameref/hyperref/refcount/cleveref hooks）---
+  % begindocument/end は全 begindocument フック（nameref の \ref 再定義、
+  % hyperref の諸設定）より後に発火するため、ここで各パッケージの
+  % key 渡し面に同じ正規化を接続する。
+  \AddToHook{begindocument/end}{%
+    % nameref: \NR@setref の \csname r@#1 を正規化 key で組み直す
+    \@ifundefined{NR@setref}{}{%
+      \def\NR@setref#1{%
+        \pdftexja@labelkey{#1}%
+        \begingroup
+          \@safe@activestrue
+          \expandafter
+        \endgroup
+        \expandafter\NR@@setref
+          \csname r@\pdftexja@labelkey@out\endcsname}%
+    }%
+    % hyperref: \label@hyperref（\hyperref[..] の key 照合）と
+    % \HyRef@autoref（\autoref の key 照合）の \csname r@<key> を正規化
+    \@ifundefined{label@hyperref}{}{%
+      \def\label@hyperref[#1]{%
+        \pdftexja@labelkey{#1}%
+        \expandafter\label@@hyperref
+          \csname r@\pdftexja@labelkey@out\endcsname{#1}}%
+    }%
+    \@ifundefined{HyRef@autoref}{}{%
+      \def\HyRef@autoref#1#2{%
+        \pdftexja@labelkey{#2}%
+        \begingroup
+          \Hy@safe@activestrue
+          \expandafter\HyRef@autosetref
+            \csname r@\pdftexja@labelkey@out\endcsname{#2}{#1}%
+        \endgroup}%
+    }%
+    % refcount: \rc@set（定義文脈）は正規化を先行させる。
+    % \getrefnumber は「完全展開可能」契約を維持するため、展開文脈でも
+    % 安全な \detokenize による byte 列化のみを行う（アクティブ CJK byte
+    % は \detokenize が展開せず string 化するため \csname 構成が安全に
+    % なる。マクロ入り key は kernel の展開型照合でも元々非対称のため
+    % 従来どおり）。eqref は \ref 経由のため重複 patch 不要。
+    \@ifundefined{rc@set}{}{%
+      % \refused（\ltx@IfUndefined{r@<key>} の生 key 照合）も正規化する
+      \def\refused#1{%
+        \pdftexja@labelkey{#1}%
+        \expandafter\ifx\csname r@\pdftexja@labelkey@out\endcsname\relax
+          \protect\G@refundefinedtrue
+          \rc@WarningUndefined{#1}%
+        \fi}%
+      \def\rc@set#1#2#3#4{%
+        \begingroup
+          \csname @safe@activestrue\endcsname
+          \refused{#4}%
+          \pdftexja@labelkey{#4}%
+          \expandafter\rc@@set
+            \csname r@\pdftexja@labelkey@out\endcsname{#1}{#2}{#3}%
+        \endgroup}%
+    }%
+    \@ifundefined{getrefnumber}{}{%
+      % \getrefnumber は refcount の「完全展開可能」契約を維持する:
+      % \detokenize は引数を展開せず string 化するため展開文脈で安全で、
+      % アクティブ CJK byte の \csname 構成が成立する。
+      % マクロ入り key は stock kernel/refcount の展開型照合でも書込側と
+      % 非対称のため従来同等（ドキュメント化済みの境界）。
+      \renewcommand*{\getrefnumber}[1]{%
+        \romannumeral
+        \expandafter\pdftexja@grn@e\expandafter{\detokenize{#1}}}%
+      \def\pdftexja@grn@e#1{%
+        \ltx@ifundefined{r@#1}{%
+          \expandafter\ltx@zero\rc@default
+        }{%
+          \expandafter\expandafter\expandafter\rc@extract@
+          \expandafter\expandafter\expandafter!%
+          \csname r@#1\expandafter\endcsname
+          \expandafter{\rc@default}\@nil
+        }}%
+    }%
+    % cleveref: \cref の取得面 \cref@getref / \cpageref@getref と
+    % 書込面（\newlabel{<key>@cref}）は cleveref の label hook 経由で
+    % key が渡る。読み側の r@<key>@cref 構成を正規化 key で行う。
+    \@ifundefined{cref@getref}{}{%
+      % cleveref 内部の \edef\@tempa{#2}（key list 走査）がアクティブ CJK
+      % byte を裸展開するため、\@cref の入口で key list を先に正規化する
+      % （catcode 12 byte はそれ以降の cleveref 内部処理で展開されない）。
+      % \cref@getref は正規化 key を受ける（再度の正規化は冪等）。
+      % 書込面の \newlabel{<key>@cref} 行の byte 列と読込面の正規化 key は
+      % 同一 byte になる（aux は生 byte、読みは catcode 12 の同一列）。
+      \let\pdftexja@cref@orig@atcref\@cref%
+      \def\@cref#1#2{%
+        \pdftexja@labelkey{#2}%
+        \edef\pdftexja@cref@call{%
+          \noexpand\pdftexja@cref@orig@atcref{#1}{\pdftexja@labelkey@out}}%
+        \pdftexja@cref@call}%
+      % NOTE: "\csname r@\pdftexja@labelkey@out@cref" は @ が letter のため
+      % 「out@cref」が単一の制御綴に融合する。接尾辞はマクロ経由で連結する。
+      \def\pdftexja@cref@suffix{@cref}%
+      \def\cref@getref#1#2{%
+        \pdftexja@labelkey{#1}%
+        \expandafter\let\expandafter#2%
+          \csname r@\pdftexja@labelkey@out\pdftexja@cref@suffix\endcsname%
+        \expandafter\expandafter\expandafter\def%
+          \expandafter\expandafter\expandafter#2%
+          \expandafter\expandafter\expandafter{%
+            \expandafter\@firstoftwo#2}}%
+      \def\cpageref@getref#1#2{%
+        \pdftexja@labelkey{#1}%
+        \expandafter\let\expandafter#2%
+          \csname r@\pdftexja@labelkey@out\pdftexja@cref@suffix\endcsname%
+        \expandafter\expandafter\expandafter\def%
+          \expandafter\expandafter\expandafter#2%
+          \expandafter\expandafter\expandafter{%
+            \expandafter\@secondoftwo#2}}%
+    }%
+  }%
+
+\makeatother
+
+\endinput

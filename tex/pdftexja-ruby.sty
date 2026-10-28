@@ -1,6 +1,12 @@
 %%
 %% This is file 'pdftexja-ruby.sty'.
-%% Experimental pdfTeX backend for the jlreq class (internal use).
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (jlreq-pdftex-ruby.sty).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
 %%
 %% Ruby provider adapter.
 %%
@@ -70,7 +76,7 @@
 %% out-of-scope (the wrapper passes such calls through unchanged).
 
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{pdftexja-ruby}[2026/10/24 v0.1 jlreq pdfTeX ruby provider adapter (experimental)]
+\ProvidesPackage{pdftexja-ruby}[2026/10/28 v0.1 pdftexja ruby provider adapter]
 \RequirePackage{pdftexja-rules}
 
 \makeatletter
@@ -484,6 +490,6 @@
     \global\pdftexja@ruby@rec=\tw@
   \fi}
 
-% NB: jlreq.cls reads the backend chain mid-class with @ as a letter;
-% keep that state (no \makeatother here), like pdftexja.sty.
+\makeatother
+
 \endinput

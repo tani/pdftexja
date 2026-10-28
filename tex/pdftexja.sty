@@ -1,0 +1,281 @@
+%%
+%% This is file 'pdftexja.sty'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (jlreq-pdftex.sty entry).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% Public entry: engine gate, package options / \pdftexjasetup key family,
+%% spacing providers, and the one-directional module load chain.
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pdftexja}[2026/10/28 v0.1 pdftexja]
+
+\makeatletter
+
+%. ---------------------------------------------------------- engine gate
+% No font initialization may happen before this gate. \endinput is
+% executed OUTSIDE the conditional (an open conditional would survive
+% the end of the file).
+\ifx\pdftexversion\undefined
+  \PackageError{pdftexja}{pdftexja requires pdfLaTeX in direct PDF mode}{%
+    This~package~uses~pdfTeX~primitives~and~needs~the~pdfTeX~engine.\MessageBreak
+    It~cannot~be~used~with~any~other~engine.\MessageBreak
+    \@ehc}%
+  \let\pdftexja@gate\endinput
+\else
+  \let\pdftexja@gate\relax
+\fi
+\pdftexja@gate
+\ifnum\pdfoutput=0
+  \PackageError{pdftexja}{pdftexja requires pdfLaTeX in direct PDF mode}{%
+    Run~pdfLaTeX~in~direct~PDF~mode~(\string\pdfoutput=1)~instead~of~DVI\MessageBreak
+    mode.\MessageBreak
+    \@ehc}%
+  \let\pdftexja@gate\endinput
+\else
+  \let\pdftexja@gate\relax
+\fi
+\pdftexja@gate
+
+%. ------------------------------------------------------------ option state
+\newif\ifpdftexja@afterpreamble
+\pdftexja@afterpreamblefalse
+\AtBeginDocument{\pdftexja@afterpreambletrue}
+% preamble-only setters (and load-only keys, which additionally may not be
+% changed after loading)
+\def\pdftexja@preambleonly#1{%
+  \ifpdftexja@afterpreamble
+    \PackageError{pdftexja}{\string#1 is preamble-only}{%
+      This~setting~must~be~made~in~the~preamble.\MessageBreak \@ehc}%
+  \fi}
+\newcount\pdftexja@opt@dir          \pdftexja@opt@dir=\z@
+\newcount\pdftexja@opt@hanging      \pdftexja@opt@hanging=\z@
+\newcount\pdftexja@opt@math         \pdftexja@opt@math=\@ne
+\newcount\pdftexja@opt@mathcapture  \pdftexja@opt@mathcapture=\@ne
+\newcount\pdftexja@opt@latinmatch   \pdftexja@opt@latinmatch=\@ne
+\newcount\pdftexja@opt@boldgothic   \pdftexja@opt@boldgothic=\z@
+\def\pdftexja@opt@fontset{ipaex-type1}
+\def\pdftexja@opt@fontprofile{}
+\def\pdftexja@opt@jfm{pdftexja-jfm-standard}
+\def\pdftexja@opt@openbr{zenkaku_tentsuki}
+\def\pdftexja@opt@pagelayout{physical}
+\def\pdftexja@opt@jascale{1}
+\def\pdftexja@auto{auto}
+\def\pdftexja@opt@furniturewidth{auto}
+\def\pdftexja@opt@firstlineoffset{auto}
+\def\pdftexja@unset{\pdftexja@unset}
+\def\pdftexja@opt@warichusize{.6\zw}
+\def\pdftexja@opt@warichuopening{\pdftexja@unset}
+\def\pdftexja@opt@warichuclosing{\pdftexja@unset}
+\def\pdftexja@opt@ttfamily{\gtdefault}
+\def\pdftexja@opt@famscope{global}
+
+% package options are collected and fed to the same key family before any
+% module loads (fonts/rules read the resulting state)
+\def\pdftexja@optlist{}
+% \CurrentOption is only \let to the option text while \ProcessOptions is
+% executing, so the list must be built with \edef (a plain \def would store
+% the token \CurrentOption and hand it to the key parser later).
+\def\pdftexja@collectoption#1{%
+  \ifx\pdftexja@optlist\@empty
+    \edef\pdftexja@optlist{#1}%
+  \else
+    \edef\pdftexja@optlist{\pdftexja@optlist,#1}%
+  \fi}
+\DeclareOption*{\pdftexja@collectoption{\CurrentOption}}
+\ProcessOptions\relax
+
+%. ------------------------------------------------ key family `pdftexja`
+\RequirePackage{expl3}
+\ExplSyntaxOn
+\cs_new_protected:Npn \pdftexja@key@loadonly:
+  {
+    \ifpdftexja@afterpreamble
+      \PackageError{pdftexja}{load-only~key~set~after~begin~document}
+        { This~key~selects~font/JFM~data~and~cannot~be~changed~after~
+          the~document~has~started. \MessageBreak \@ehc }
+    \fi
+  }
+\cs_new_protected:Npn \pdftexja@key@preambleonly:
+  {
+    \ifpdftexja@afterpreamble
+      \PackageError{pdftexja}{preamble-only~key~set~after~begin~document}
+        { This~key~must~be~set~in~the~preamble. \MessageBreak \@ehc }
+    \fi
+  }
+\keys_define:nn { pdftexja }
+  {
+    direction .choice:,
+    direction / yoko .code:n =
+      { \pdftexja@key@loadonly: \pdftexja@opt@dir=\z@ },
+    direction / tate .code:n =
+      { \pdftexja@key@loadonly: \pdftexja@opt@dir=\@ne },
+    direction .default:n = yoko,
+
+    fontset .choice:,
+    fontset / ipaex-type1 .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@fontset {ipaex-type1} },
+    fontset / ipa .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@fontset {ipa} },
+    fontset / haranoaji .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@fontset {haranoaji} },
+    fontset / custom .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@fontset {custom} },
+    fontset .default:n = ipaex-type1,
+
+    fontprofile .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@fontprofile {#1} },
+
+    jfm .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@jfm {#1} },
+
+    open-bracket-pos .choice:,
+    open-bracket-pos / zenkaku_tentsuki .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@openbr {zenkaku_tentsuki} },
+    open-bracket-pos / zenkakunibu_nibu .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@openbr {zenkakunibu_nibu} },
+    open-bracket-pos / nibu_tentsuki .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@openbr {nibu_tentsuki} },
+    open-bracket-pos .default:n = zenkaku_tentsuki,
+
+    hanging-punctuation .choice:,
+    hanging-punctuation / true .code:n =
+      { \pdftexja@key@loadonly: \pdftexja@opt@hanging=\@ne },
+    hanging-punctuation / false .code:n =
+      { \pdftexja@key@loadonly: \pdftexja@opt@hanging=\z@ },
+    hanging-punctuation .default:n = true,
+
+    math .choice:,
+    math / true .code:n =
+      { \pdftexja@key@loadonly: \pdftexja@opt@math=\@ne },
+    math / false .code:n =
+      { \pdftexja@key@loadonly: \pdftexja@opt@math=\z@ },
+    math .default:n = true,
+
+    math-capture .choice:,
+    math-capture / true .code:n =
+      { \pdftexja@key@loadonly: \pdftexja@opt@mathcapture=\@ne },
+    math-capture / false .code:n =
+      { \pdftexja@key@loadonly: \pdftexja@opt@mathcapture=\z@ },
+    math-capture .default:n = true,
+
+    page-layout .choice:,
+    page-layout / physical .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@pagelayout {physical} },
+    page-layout / logical .code:n =
+      { \pdftexja@key@loadonly:
+        \cs_set:Npn \pdftexja@opt@pagelayout {logical} },
+    page-layout .default:n = physical,
+
+    ja-scale .code:n =
+      { \cs_set:Npn \pdftexja@opt@jascale {#1}
+        \@ifundefined{pdftexja@setsize}{}{\pdftexja@setsize} },
+
+    furniture-width .code:n =
+      { \pdftexja@key@preambleonly:
+        \cs_set:Npn \pdftexja@opt@furniturewidth {#1} },
+
+    first-line-offset .code:n =
+      { \pdftexja@key@preambleonly:
+        \cs_set:Npn \pdftexja@opt@firstlineoffset {#1} },
+
+    warichu-size .code:n =
+      { \cs_set:Npn \pdftexja@opt@warichusize {#1} },
+    warichu-opening .code:n =
+      { \cs_set:Npn \pdftexja@opt@warichuopening {#1} },
+    warichu-closing .code:n =
+      { \cs_set:Npn \pdftexja@opt@warichuclosing {#1} },
+
+    latin-family-matching .choice:,
+    latin-family-matching / true .code:n =
+      { \pdftexja@key@preambleonly: \pdftexja@opt@latinmatch=\@ne },
+    latin-family-matching / false .code:n =
+      { \pdftexja@key@preambleonly: \pdftexja@opt@latinmatch=\z@ },
+    latin-family-matching .default:n = true,
+
+    typewriter-ja-family .code:n =
+      { \pdftexja@key@preambleonly:
+        \cs_set:Npn \pdftexja@opt@ttfamily {#1} },
+
+    bold-ja .choice:,
+    bold-ja / font .code:n =
+      { \pdftexja@key@preambleonly: \pdftexja@opt@boldgothic=\z@ },
+    bold-ja / gothic-medium .code:n =
+      { \pdftexja@key@preambleonly: \pdftexja@opt@boldgothic=\@ne },
+    bold-ja .default:n = font,
+
+    ja-family-scope .choice:,
+    ja-family-scope / global .code:n =
+      { \pdftexja@key@preambleonly:
+        \cs_set:Npn \pdftexja@opt@famscope {global} },
+    ja-family-scope / group .code:n =
+      { \pdftexja@key@preambleonly:
+        \cs_set:Npn \pdftexja@opt@famscope {group} },
+    ja-family-scope .default:n = global,
+
+    unknown .code:n =
+      { \PackageError{pdftexja}{unknown~pdftexja~key~`\l_keys_key_tl'}
+          { See~the~package~documentation~for~the~supported~keys.
+            \MessageBreak \@ehc } },
+  }
+\NewDocumentCommand \pdftexjasetup { m }
+  { \keys_set:nn { pdftexja } {#1} }
+\ExplSyntaxOff
+
+% NOTE on class options: this LaTeX kernel strips the VALUE from an
+% unused global option before a package can see it (`\@unusedoptionlist`
+% records `direction`, not `direction=tate`), so key=value settings can
+% only arrive as PACKAGE options or through \pdftexjasetup.  A class that
+% wants to expose them declares its own options and forwards them
+% explicitly (jlreq does exactly that in its adapter).
+
+% options are processed before any module loads
+\expandafter\pdftexjasetup\expandafter{\pdftexja@optlist}
+
+%. -------------------------------------------------- spacing providers
+% The undefined-pair fallback and \pdftexjaGetSpacing use these providers.
+% They are macro providers (not registers): a redefinition is live at the
+% next boundary and their relative dimensions track the current size.
+\def\pdftexja@kanjiskip{0pt plus .25\zw minus 0pt}
+\def\pdftexja@xkanjiskip{.25\zw plus .25\zw minus .125\zw}
+% \pdftexjaSetSpacing{<JA-JA>}{<JA-Latin>}: store the providers
+% unexpanded; an empty argument keeps that side; plain \def, so the
+% assignment is group-local.
+\def\pdftexjaSetSpacing#1#2{%
+  \def\pdftexja@sp@tmp{#1}%
+  \ifx\pdftexja@sp@tmp\@empty\else\def\pdftexja@kanjiskip{#1}\fi
+  \def\pdftexja@sp@tmp{#2}%
+  \ifx\pdftexja@sp@tmp\@empty\else\def\pdftexja@xkanjiskip{#2}\fi}
+
+%. ------------------------------------------------------ module load chain
+% One direction only; no module re-requires this entry.
+\RequirePackage{pdftexja-fonts}
+\RequirePackage{pdftexja-rules}
+% JFM index + both direction payloads for the selected variant
+\pdftexja@jfm@load{\pdftexja@opt@jfm}
+\RequirePackage{pdftexja-direction}
+\RequirePackage{pdftexja-paper}
+\RequirePackage{pdftexja-math}
+\RequirePackage{pdftexja-latex}
+\RequirePackage{pdftexja-inline}
+\RequirePackage{pdftexja-ruby}
+\RequirePackage{pdftexja-paragraph}
+
+\makeatother
+
+\endinput

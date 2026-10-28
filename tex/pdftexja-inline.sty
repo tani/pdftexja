@@ -1,0 +1,450 @@
+%%
+%% This is file 'pdftexja-inline.sty'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (jlreq.cls inline commands:
+%% \jaspace, \tatechuyoko, \jidori, \akigumi, \warichu/\inlinenote).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% Inline Japanese commands: spacing, tate-chu-yoko, jidori, akigumi,
+%% rensuji and warichu. All of them use the package's own state, the
+%% direction factory and the JFM queries; none reads class state.
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pdftexja-inline}[2026/10/28 v0.1 pdftexja inline commands]
+
+\makeatletter
+
+%. ---------------------------------------------------------- scratch state
+\newdimen\pdftexja@tempdima
+\newdimen\pdftexja@tempdimb
+\newdimen\pdftexja@tempdimc
+\newbox\pdftexja@tempboxa
+\newbox\pdftexja@tempboxb
+\newbox\pdftexja@resultbox
+\newdimen\pdftexja@resultdimen
+\def\pdftexja@do{}
+\def\pdftexja@endmark{\pdftexja@endmark}
+\def\pdftexja@ifendmark#1#2#3{%
+  \def\pdftexja@tmp{#1}%
+  \ifx\pdftexja@tmp\pdftexja@endmark #2\else #3\fi}
+% #1 (skip register) is zero (no expansion)
+\def\pdftexja@ifgluezero#1#2#3{%
+  \begingroup
+    \edef\pdftexja@tmpa{\the#1}%
+    \edef\pdftexja@tmpb{\detokenize{0.0pt}}%
+    \edef\pdftexja@do{\ifx\pdftexja@tmpa\pdftexja@tmpb
+      \noexpand\@firstoftwo\else\noexpand\@secondoftwo\fi}%
+  \expandafter\endgroup
+  \pdftexja@do{#2}{#3}}
+% last box of a vlist into \pdftexja@resultbox (class helper semantics)
+\def\pdftexja@getlastbox#1{%
+  \setbox#1=\vbox{\unvbox#1\relax
+    \unskip\unskip\unpenalty\global\setbox\pdftexja@resultbox=\lastbox}%
+  \ifhbox\pdftexja@resultbox
+    \global\setbox\pdftexja@resultbox=\hbox{%
+      \unhbox\pdftexja@resultbox\unskip\unskip\unpenalty}%
+  \else
+    \global\setbox\pdftexja@resultbox=\copy\voidb@x
+  \fi}
+% center a box on a normal character's optical center
+\def\pdftexja@box@putcenter#1{%
+  \begingroup
+    \pdftexja@tempdima=\dimexpr(\ht#1 - \dp#1)/2\relax
+    \setbox\pdftexja@tempboxa=\hbox{阿}%
+    \pdftexja@tempdima=\dimexpr
+      (\ht\pdftexja@tempboxa - \dp\pdftexja@tempboxa)/2 - \pdftexja@tempdima\relax
+    \edef\pdftexja@do{%
+      \unexpanded{\ht#1}=\the\dimexpr\ht\pdftexja@tempboxa - \pdftexja@tempdima\relax
+      \unexpanded{\dp#1}=\the\dimexpr\dp\pdftexja@tempboxa + \pdftexja@tempdima\relax
+      \noexpand\raise\the\pdftexja@tempdima\unexpanded{\box#1}%
+    }%
+  \expandafter\endgroup
+  \pdftexja@do}
+
+%. ----------------------------------------------------------- \jaspace
+\NewDocumentCommand{\jaspace}{ m }{%
+  \ifcsname pdftexja@jaspace@#1\endcsname
+    \csname pdftexja@jaspace@#1\endcsname
+  \else
+    \PackageError{pdftexja}{unknown jaspace: #1}{%
+      Use~zenkaku,~nibu~or~shibu.\MessageBreak \@ehc}%
+  \fi}
+\def\pdftexja@jaspace@zenkaku{\hskip\glueexpr 1\zw\relax}
+\def\pdftexja@jaspace@nibu{\hskip\glueexpr .5\zw\relax}
+\def\pdftexja@jaspace@shibu{\hskip\glueexpr .25\zw\relax}
+
+%. ------------------------------------------------------- \tatechuyoko
+% JFM boundary natural length between an observed codepoint and a
+% character, through the shared evaluator (no re-implementation).
+\newskip\pdftexja@resultskip
+\def\pdftexja@calc@jfmglue@cp#1#2{%
+  \begingroup
+    \pdftexja@classofcp{#1}%
+    \edef\pdftexja@calc@cla{\the\pdftexja@evalclass}%
+    \global\pdftexja@lastzw=\pdftexja@jareg
+    \pdftexja@classofchar{#2}%
+    \edef\pdftexja@calc@clb{\the\pdftexja@evalclass}%
+    \global\pdftexja@lastzw=\pdftexja@jareg
+    \pdftexja@evalpairglue{\pdftexja@calc@cla}{\pdftexja@calc@clb}%
+    \edef\pdftexja@do{\noexpand\pdftexja@resultskip=\the\pdftexja@nat\relax}%
+  \expandafter\endgroup
+  \pdftexja@do}
+\NewDocumentCommand{\tatechuyoko}{ s m }{%
+  \IfBooleanTF{#1}{%
+    \pdftexjaIfDirectionTF{tate}{\pdftexja@tatechuyoko@i{#2}}{#2}%
+  }{%
+    \pdftexjaIfDirectionTF{tate}{}{%
+      \PackageError{pdftexja}{%
+        \string\tatechuyoko\space is not allowed in yoko mode}{%
+        Use~the~star~form~in~yoko~mode~to~typeset~the~content~inline.\MessageBreak
+        \@ehc}}%
+    \pdftexja@tatechuyoko@i{#2}%
+  }}
+\def\pdftexja@tatechuyoko@i#1{%
+  \ifvmode\leavevmode\fi
+  % boxbdd semantics for a preceding closed box
+  \pdftexja@boxbddlastchar
+  \ifnum\pdftexja@lastnodechar>\m@ne
+    \inhibitglue
+    \pdftexja@calc@jfmglue@cp{\the\pdftexja@lastnodechar}{阿}%
+    \pdftexja@ifgluezero\pdftexja@resultskip{}{\hskip\pdftexja@resultskip}%
+  \fi
+  % one typeset pass, pinned to the tate normal cell (1zw: .5 + .5)
+  \pdftexja@yokobox@strut{.5\pdftexja@jareg}{.5\pdftexja@jareg}{#1}}
+
+%. ------------------------------------------------------ \jidori/\akigumi
+\NewDocumentCommand{\jidori}{ m m }{%
+  \ifvmode\leavevmode\fi
+  \begingroup
+    \pdftexja@jidorimode=2\relax
+    \hbox to #1{#2\hskip 0pt minus 1fil\relax}%
+  \endgroup}
+\NewDocumentCommand{\akigumi}{ m m }{%
+  \ifvmode\leavevmode\fi
+  \begingroup
+    \pdftexja@akiskip=#1\relax
+    \pdftexja@jidorimode=1\relax
+    \hbox{#2}%
+  \endgroup}
+
+%. -------------------------------------------------------------- \rensuji
+% \rensuji[c|l|r]{body} (+star), \Rensuji, \prensuji. The digits run is
+% uncompressed; yoko is a plain hbox with no skip; tate adds
+% \rensujiskip on both sides, and the unstarred form adds the zero-width
+% line-expansion rule whose height/depth are computed from the tate
+% normal cell (H,D) and the natural horizontal content width W.
+\newskip\rensujiskip
+\rensujiskip=.25\Chs plus .25\zw minus .25\zw
+\newbox\pdftexja@rensuji@box
+\newdimen\pdftexja@rensuji@wd
+\newdimen\pdftexja@rensuji@H
+\newdimen\pdftexja@rensuji@D
+\newdimen\pdftexja@rensuji@ht
+\newdimen\pdftexja@rensuji@dp
+\newdimen\pdftexja@rensuji@unused
+\def\pdftexja@rensuji@alignment#1{%
+  \ifnum\pdfstrcmp{#1}{c}=0 \relax
+    \pdftexja@rensuji@ht=\dimexpr
+      (\pdftexja@rensuji@wd+\pdftexja@rensuji@H-\pdftexja@rensuji@D)/2\relax
+    \pdftexja@rensuji@dp=\dimexpr
+      (\pdftexja@rensuji@wd-\pdftexja@rensuji@H+\pdftexja@rensuji@D)/2\relax
+  \else\ifnum\pdfstrcmp{#1}{r}=0 \relax
+    \pdftexja@rensuji@ht=\pdftexja@rensuji@H
+    \pdftexja@rensuji@dp=\dimexpr\pdftexja@rensuji@wd-\pdftexja@rensuji@H\relax
+  \else\ifnum\pdfstrcmp{#1}{l}=0 \relax
+    \pdftexja@rensuji@ht=\dimexpr\pdftexja@rensuji@wd-\pdftexja@rensuji@D\relax
+    \pdftexja@rensuji@dp=\pdftexja@rensuji@D
+  \else
+    \PackageError{pdftexja}{invalid rensuji alignment `#1'}{%
+      Use~c,~l~or~r.\MessageBreak \@ehc}%
+    \pdftexja@rensuji@ht=\pdftexja@rensuji@wd
+    \pdftexja@rensuji@dp=\z@
+  \fi\fi\fi}
+\def\pdftexja@rensuji#1#2#3{% #1=alignment #2=body #3=rule flag
+  \pdftexjaIfDirectionTF{tate}%
+    {\pdftexja@rensuji@tate{#1}{#2}{#3}}%
+    {\hbox{#2}}}
+\def\pdftexja@rensuji@tate#1#2#3{%
+  \setbox\pdftexja@rensuji@box=\hbox{#2}%
+  % W = the natural horizontal content width; H/D = the tate normal cell
+  \pdftexja@rensuji@wd=\wd\pdftexja@rensuji@box
+  \pdftexjaGetMetrics{tate}\pdftexja@rensuji@unused
+    \pdftexja@rensuji@H\pdftexja@rensuji@D
+  \pdftexja@rensuji@alignment{#1}%
+  \hskip\rensujiskip
+  \box\pdftexja@rensuji@box
+  \hskip\rensujiskip
+  \ifnum#3=1 \pdftexja@rensuji@rule \fi}
+\def\pdftexja@rensuji@rule{%
+  \vrule width\z@ height\pdftexja@rensuji@ht depth\pdftexja@rensuji@dp\relax}
+\NewDocumentCommand{\rensuji}{ s O{c} m }{%
+  \IfBooleanTF{#1}{\pdftexja@rensuji{#2}{#3}{0}}{\pdftexja@rensuji{#2}{#3}{1}}}
+\NewDocumentCommand{\Rensuji}{ O{c} m }{\pdftexja@rensuji{#1}{#2}{1}}
+\NewDocumentCommand{\prensuji}{ O{c} m }{\pdftexja@rensuji{#1}{#2}{1}}
+
+%. ------------------------------------------------ warichu / inlinenote
+% live providers (the size/opening/closing keys are group-local and
+% evaluated at use; the defaults were installed with CJK-active catcodes
+% by the fonts module)
+\def\pdftexja@warichu@opening{\pdftexja@opt@warichuopening}
+\def\pdftexja@warichu@closing{\pdftexja@opt@warichuclosing}
+%.. 割注（3.4）
+\def\inlinenotesize{\pdftexja@opt@warichusize} % live provider (default .6\zw)
+\let\pdftexja@inlinenote@autolinebreak=\\% 計測時は\linebreakより\\の方が安定する．悩ましい……．
+
+\def\pdftexja@inlinenote@kakkofontsize{%
+  \fontsize{\dimexpr\inlinenotesize * 2\relax}{\dimexpr \inlinenotesize * 2\relax}%
+  \selectfont
+}
+
+\def\pdftexja@inlinenote@fontsize{%
+  \fontsize{\inlinenotesize}{\inlinenotesize}%
+  \selectfont
+}
+
+% 割注を入れるための命令．\inlinenote{割注}で使う．
+% 改行位置は自動で計算されるが，常に正しいとは限らない．
+% \inlinenote*は自動で改行されない．\\で改行位置を指定する．
+\newif\ifpdftexja@in@inlinenote
+\pdftexja@in@inlinenotefalse
+\NewDocumentCommand{\inlinenote}{ s m } {
+  \ifpdftexja@in@inlinenote\PackageError{pdftexja}{\string\inlinenote\space can't~be~nested}{\@ehc}\fi
+  \pdftexja@in@inlinenotetrue
+  \ifvmode\leavevmode\fi
+  \IfBooleanTF {#1} { \pdftexja@inlinenote@noauto {#2} } { \pdftexja@inlinenote@auto {#2} }
+}
+\NewDocumentCommand{\warichu}{ s m } {
+  \ifpdftexja@in@inlinenote\PackageError{pdftexja}{\string\warichu\space can't~be~nested}{\@ehc}\fi
+  \pdftexja@in@inlinenotetrue
+  \ifvmode\leavevmode\fi
+  \IfBooleanTF {#1} { \pdftexja@inlinenote@noauto {#2} } { \pdftexja@inlinenote@auto {#2} }
+}
+\def\pdftexja@inlinenote@auto#1{%
+  % 割注初め括弧の前の場所を保存
+  \pdftexjaMeasureLinePosition\pdftexja@current@linewidth\pdftexja@rest@linewidth
+  % \pdftexja@tempdimbに，現在行の残り長さを入れる
+  \pdftexja@tempdimb=\pdftexja@rest@linewidth
+  % 括弧の分を引いたものが，割注の使える長さ
+  \setbox\@tempboxa=\hbox{\pdftexja@inlinenote@kakkofontsize\inhibitglue\pdftexja@warichu@opening\inhibitglue}%
+  \addtolength{\pdftexja@tempdimb}{-\wd\@tempboxa}%
+  \ifdim\pdftexja@tempdimb<0pt\pdftexja@tempdimb=\linewidth\fi
+  {%
+    \setbox\pdftexja@tempboxa=\hbox{\pdftexja@inlinenote@kakkofontsize\inhibitglue\pdftexja@warichu@opening}%
+    \pdftexja@box@putcenter\pdftexja@tempboxa
+  }%
+  % 「初回」時はここに強制改行を入れる．これにより現在位置の取得がより正しくなる……といいなぁ
+  \pdftexjaIfPositionKnownTF{}{\pdftexja@inlinenote@autolinebreak}%
+  % 割注内の\baselineskipを保存（後で使う）．
+  {\pdftexja@inlinenote@fontsize\xdef\pdftexja@inlinenote@baselineskip{\the\baselineskip}}%
+  % 普通に並べた長さを計測し，その半分から始める
+  \setbox\@tempboxa=\hbox{\pdftexja@inlinenote@fontsize #1}%
+  \pdftexja@tempdimc=\wd\@tempboxa
+  \divide\pdftexja@tempdimc by 2\relax
+  % \@tempcntbに，この長さで計測した場合の行数を入れる
+  \ifdim\pdftexja@tempdimc<\pdftexja@tempdimb\@tempcntb=2\relax
+  \else
+    \pdftexja@tempdima=\dimexpr\pdftexja@tempdimc - \pdftexja@tempdimb\relax
+    \divide\pdftexja@tempdima\linewidth
+    \@tempcntb=\numexpr 2*\number\pdftexja@tempdima + 4\relax
+  \fi
+  % \pdftexja@parshapeargに\parshapeに指定する書式の最後以外を入れる．
+  \ifnum\@tempcntb>2\relax
+    \edef\pdftexja@parshapearg{0pt\space\the\pdftexja@tempdimb\space 0pt\space\the\pdftexja@tempdimb}%
+    \@tempcnta=4\relax
+    \@whilenum\@tempcnta<\@tempcntb\do{%
+      \edef\pdftexja@parshapearg{\pdftexja@parshapearg\space 0pt\space\the\linewidth\space 0pt\space\the\linewidth}%
+      \advance\@tempcnta by 2\relax
+    }%
+    \setlength{\pdftexja@tempdimc}{\dimexpr\pdftexja@tempdimc - \pdftexja@tempdimb - \linewidth * \numexpr(\@tempcntb - 4)/2\relax\relax}%
+  \else
+    \def\pdftexja@parshapearg{}%
+  \fi
+  % 行数を伸ばしつつ良いところを探していく
+  \@whilenum\@tempcntb<1001\do{%
+    \ifnum\@tempcntb>2\pdftexja@tempdimb=\linewidth\fi
+    \edef\@tempb{\the\@tempcntb}%
+    \pdftexja@inlinenote@determinelength{#1}{\pdftexja@inlinenote@fontsize}{\pdftexja@parshapearg}{2}{\@tempb}{\pdftexja@tempdimc}{\pdftexja@tempdimb}%
+    \@tempcntb=\@tempb
+    \ifnum\@tempcntb>999\relax% ループが長すぎる
+      \global\setbox\pdftexja@resultbox=\voidb@x%
+      \@tempcntb=1001\relax
+    \fi
+    \ifvoid\pdftexja@resultbox\else% 成功
+      \edef\pdftexja@inlinenote@lines{\the\@tempcntb}% 行数を保存
+      \@tempcntb=1001\relax
+    \fi
+    \advance\@tempcntb by 2\relax
+    \edef\pdftexja@parshapearg{\pdftexja@parshapearg\space 0pt\space\the\pdftexja@tempdimb\space 0pt\space\the\pdftexja@tempdimb}%
+  }%
+  \ifvoid\pdftexja@resultbox
+    \PackageWarning{pdftexja}{\string\warichu\space failed,~may~be~a~bug}%
+  \else
+    \@tempcnta=0
+    \splittopskip=0pt\relax
+    \splitmaxdepth=\maxdimen
+    % 現在行の残り長さを思い出す
+    \pdftexja@tempdimb=\pdftexja@rest@linewidth
+    \setbox\@tempboxa=\hbox{\pdftexja@inlinenote@kakkofontsize\inhibitglue\pdftexja@warichu@opening\inhibitglue}%
+    \addtolength{\pdftexja@tempdimb}{-\wd\@tempboxa}%
+    \setbox\@tempboxa=\box\pdftexja@resultbox
+    \@whilenum\@tempcnta<\pdftexja@inlinenote@lines\do{%
+      \ifnum\@tempcnta>\z@ \pdftexja@inlinenote@autolinebreak \fi
+      % \pdftexja@tempdimaに今の行の長さを入れる
+      \ifnum\@tempcnta<\numexpr\pdftexja@inlinenote@lines - 2\relax
+        \ifnum\@tempcnta=0\pdftexja@tempdima=\pdftexja@tempdimb
+        \else\pdftexja@tempdima=\linewidth\fi
+      \else
+        % 最終行は自然長に任せる
+        \pdftexja@tempdima=-1pt\relax
+      \fi
+      {%
+        \pdftexja@tempdimc=\vfuzz\relax
+        \vfuzz=\maxdimen
+%        \setbox\pdftexja@tempboxa=\vsplit\@tempboxa to \dimexpr\pdftexja@inlinenote@baselineskip*2\relax
+%        \pdftexja@getlastbox{\pdftexja@tempboxa}%
+%        \setbox\pdftexja@tempboxb=\box\pdftexja@resultbox
+%        \pdftexja@getlastbox{\pdftexja@tempboxa}%
+%        \setbox\pdftexja@tempboxa=\box\pdftexja@resultbox
+        \setbox\pdftexja@tempboxa=\vsplit\@tempboxa to 1sp\relax
+        \pdftexja@getlastbox{\pdftexja@tempboxa}
+        \setbox\pdftexja@tempboxa=\box\pdftexja@resultbox
+        \setbox\pdftexja@tempboxb=\vsplit\@tempboxa to 1sp\relax
+        \pdftexja@getlastbox{\pdftexja@tempboxb}
+        \setbox\pdftexja@tempboxb=\box\pdftexja@resultbox
+        \ifdim\pdftexja@tempdima>0pt\relax
+          \setbox\pdftexja@tempboxa=\vbox{\pdftexja@inlinenote@fontsize
+            \hbox to \pdftexja@tempdima{\unhbox\pdftexja@tempboxa}%
+            \hbox to \pdftexja@tempdima{\unhbox\pdftexja@tempboxb}}%
+        \else
+          \setbox\pdftexja@tempboxa=\vbox{\pdftexja@inlinenote@fontsize
+            \hbox{\unhbox\pdftexja@tempboxa}%
+            \hbox{\unhbox\pdftexja@tempboxb}}%
+        \fi
+        \setbox\pdftexja@tempboxa=\hbox{\box\pdftexja@tempboxa}%
+        \pdftexja@box@putcenter\pdftexja@tempboxa
+        \vfuzz=\pdftexja@tempdimc\relax
+      }%
+      \advance\@tempcnta by 2\relax
+    }%
+  \fi
+  \pdftexja@inlinenote@endnote
+}
+
+\def\pdftexja@inlinenote@noauto#1{%
+  \setbox\pdftexja@tempboxa=\hbox{\pdftexja@inlinenote@kakkofontsize\inhibitglue\pdftexja@warichu@opening}%
+  \inhibitglue\pdftexja@box@putcenter\pdftexja@tempboxa
+  \pdftexja@inlinenote@noauto@#1\\\pdftexja@endmark\pdftexja@endmark
+  \pdftexja@inlinenote@endnote
+}
+
+\def\pdftexja@inlinenote@noauto@#1\\#2#3\pdftexja@endmark{%
+  \pdftexja@inlinenote@noauto@@#1&\pdftexja@endmark\pdftexja@endmark
+  \pdftexja@ifendmark{#2}{}{\linebreak\pdftexja@inlinenote@noauto@#2#3\pdftexja@endmark}%
+}
+
+\def\pdftexja@inlinenote@noauto@@#1&#2#3\pdftexja@endmark{%
+  \pdftexja@ifendmark{#2}{%
+    \setbox\@tempboxa=\hbox{\pdftexja@inlinenote@fontsize #1}%
+    \pdftexja@tempdimc=\wd\@tempboxa
+    \divide\pdftexja@tempdimc by 2\relax
+    \pdftexja@inlinenote@determinelength{#1}{\pdftexja@inlinenote@fontsize}{}{2}{2}{\pdftexja@tempdimc}{\maxdimen}%
+    \ifvoid\pdftexja@resultbox\else
+      {%
+        \setbox\pdftexja@tempboxa=\hbox{\pdftexja@inlinenote@fontsize\box\pdftexja@resultbox}%
+        \pdftexja@box@putcenter\pdftexja@tempboxa
+      }%
+    \fi
+    \def\pdftexja@next{}%
+  }{%
+    \def\pdftexja@next{\pdftexja@inlinenote@noauto@@@{#1}#2#3}%
+  }%
+  \pdftexja@next
+}
+
+\def\pdftexja@inlinenote@noauto@@@#1#2&\pdftexja@endmark{%
+  \setbox\@tempboxa=\hbox{\pdftexja@inlinenote@fontsize\vbox{\hbox{#1}\hbox{#2}}}%
+  \pdftexja@box@putcenter\@tempboxa
+}
+
+\def\pdftexja@inlinenote@endnote{%
+  \pdftexja@in@inlinenotefalse
+  {%
+    \setbox\pdftexja@tempboxa=\hbox{\pdftexja@inlinenote@kakkofontsize\inhibitglue\pdftexja@warichu@closing}%
+    \pdftexja@box@putcenter\pdftexja@tempboxa
+    \inhibitglue
+  }%
+}
+
+% \pdftexja@inlinenote@determinelength{テキスト(1)}{フォントとか指定(2)}{\parshape指定(3)}{調整に使う行数(4)}{成功行数(5)}{最小長さ(6)}{最大長さ(7)}
+% 次を満たす長さXの最小値を求める（ただし#6 <= X <= #7）
+% #1を
+% * #5 - #4行目までは#3の指定に従う
+% * それ以降はX
+% として整形した際に，#5行以内に収まる．
+% \pdftexja@resultboxに整形結果を返す（垂直ボックス）．見つからなかったらvoid．\globalに設定する．
+\long\def\pdftexja@inlinenote@determinelength#1#2#3#4#5#6#7{%
+  \begingroup
+%    \message{#1 の試行開始，行数 = #5, \the\dimexpr#6\relax から \the\dimexpr#7\relax まで（長さ\the\dimexpr #7 - #6\relax ）}%
+    \@tempcnta=1\relax
+    \def\@tempa{}%
+    % 調整に使う行の\parshape指定を\@tempaに入れる．長さは\pdftexja@tempdima．
+    \@whilenum\@tempcnta<#4\do{%
+      \expandafter\def\expandafter\@tempa\expandafter{\@tempa\space 0pt\space\the\pdftexja@tempdima}%
+      \advance\@tempcnta by 1\relax
+    }%
+    \@tempcnta=0
+    \pdftexja@tempdima=#6\relax
+    % \pdftexja@tempdimaを少しずつ伸ばしていく
+    \@whilenum\@tempcnta<1000\do{%
+      \ifnum\@tempcnta>999\relax% ループが長すぎる
+        \global\setbox\pdftexja@resultbox=\voidb@x%
+        \@tempcnta=1001\relax
+      \else
+        \setbox\@tempboxa=\vbox{#2%
+          \vbadness=10000\hbadness=10000\vfuzz=\maxdimen\hfuzz=\maxdimen
+          \parindent=0pt\leftskip=0pt\rightskip=0pt
+          \parshape #5\space #3\space\@tempa 0pt\space\the\maxdimen
+          #1\par\global\@tempcntb=\prevgraf}%
+%        \message{\string\pdftexja@tempdima = \the\pdftexja@tempdima で試行，行数は\the\@tempcntb , 書式~#5~#3~\@tempa\space 0pt~\the\maxdimen}%
+      \fi
+      \pdftexja@getlastbox{\@tempboxa}%
+      \setbox\pdftexja@tempboxa=\box\pdftexja@resultbox
+      \ifnum\@tempcntb<#5\relax% 行数が達していないならOK
+%        \message{行数 = \the\@tempcntb により確定}
+        % #5行になるまで空の水平ボックスを加えていく．
+        \global\setbox\pdftexja@resultbox=\vbox{#2%
+          \unvbox\@tempboxa\hbox{\unhbox\pdftexja@tempboxa\unskip\unskip\unpenalty}%
+          \@whilenum\@tempcntb<#5\do{\hbox{}\advance\@tempcntb by 1}}%
+        \@tempcnta=1001\relax
+      \else
+        % そうでない場合は最後の二行の長さを比較する
+        \pdftexja@getlastbox{\@tempboxa}%
+        \setbox\pdftexja@tempboxb=\box\pdftexja@resultbox
+%        \message{最終行の長さ \the\wd\pdftexja@tempboxa, その前の長さ \the\wd\pdftexja@tempboxb}%
+        \ifdim\wd\pdftexja@tempboxa>\wd\pdftexja@tempboxb
+          \advance\pdftexja@tempdima by 0.3pt\relax% 0.3ptに意味はない
+        \else
+          % 後ろが短いのでOK
+          \global\setbox\pdftexja@resultbox=\vbox{#2\unvbox\@tempboxa\box\pdftexja@tempboxb\box\pdftexja@tempboxa}%
+          \pdftexja@resultdimen=\pdftexja@tempdima
+          \@tempcnta=1001\relax
+        \fi
+      \fi
+      \ifdim\pdftexja@tempdima>#7\relax
+        \global\setbox\pdftexja@resultbox=\box\voidb@x
+        \@tempcnta=1001\relax
+      \fi
+      \advance\@tempcnta by 1\relax
+    }%
+  \endgroup
+}
+
+
+\makeatother
+
+\endinput

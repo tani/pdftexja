@@ -170,9 +170,10 @@ def main():
                  len(prof["glyphs"]), len(prof["maplines"])))
         # (1) referenced assets exist
         for _, name in prof["tfm"]:
-            if not os.path.exists(os.path.join(fontsdir, name + ".tfm")):
-                errs += fail("TFM %s.tfm missing (profile %s)"
-                            % (name, prof_path))
+            fname = name if name.endswith(".tfm") else name + ".tfm"
+            if not os.path.exists(os.path.join(fontsdir, fname)):
+                errs += fail("TFM %s missing (profile %s)"
+                            % (fname, prof_path))
         for _, name in prof["enc"]:
             if not os.path.exists(os.path.join(fontsdir, name)):
                 errs += fail("enc %s missing (profile %s)"
@@ -207,7 +208,8 @@ def main():
                               encoding="utf-8").read().splitlines()[1:257]:
                     l = l.strip()
                     if l.startswith("/") and l != "/.notdef":
-                        all_glyphs.add(int(l[7:], 16))  # /pdftexjavXXXX
+                        # enc slots are /pdftexjavXXXX
+                        all_glyphs.add(int(l[len("/pdftexjav"):], 16))
         missing = [g for g in all_glyphs if g not in prof["tounicode"]]
         if missing:
             errs += fail("profile %s: %d glyphs without \\pdfglyphtounicode "
@@ -280,7 +282,7 @@ def main():
     # fixed dates, and their cmap must cover every cmap codepoint of the
     # source OTF (no glyph lost by the CFF->quadratic conversion).
     for label in ("mincho", "mincho-bold", "gothic", "gothic-bold"):
-        p = os.path.join(fontsdir, "haranoaji-%s-ttf.ttf" % label)
+        p = os.path.join(fontsdir, "pdftexja-haranoaji-%s-ttf.ttf" % label)
         if not os.path.exists(p):
             errs += fail("haranoaji horizontal TTF %s missing" % p)
             continue

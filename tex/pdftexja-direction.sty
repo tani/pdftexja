@@ -1,0 +1,437 @@
+%%
+%% This is file 'pdftexja-direction.sty'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (direction box factory and
+%% shipout rotation) and from jlreq.cls (logical line position).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% Local direction (box factory), page direction lifecycle, logical line
+%% position (savepos) and the tate shipout rotation.
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pdftexja-direction}[2026/10/28 v0.1 pdftexja direction]
+\RequirePackage{graphicx}
+
+\makeatletter
+
+%. ------------------------------------------------------- public queries
+% \pdftexjaIfDirectionTF{yoko|tate}{T}{F}: the CURRENT local direction
+% (frame state), not the main document direction.  Branch selection uses
+% \let + invoke AFTER the conditionals are closed: nesting an
+% \expandafter\@firstoftwo idiom inside another conditional's branch hands
+% the outer \else/\fi to \@firstoftwo and runs both branches.
+\def\pdftexjaIfDirectionTF#1#2#3{%
+  \ifnum\pdfstrcmp{#1}{tate}=\z@
+    \ifnum\pdftexja@dir=\@ne
+      \let\pdftexja@next\@firstoftwo
+    \else
+      \let\pdftexja@next\@secondoftwo
+    \fi
+  \else
+    \ifnum\pdfstrcmp{#1}{yoko}=\z@
+      \ifnum\pdftexja@dir=\z@
+        \let\pdftexja@next\@firstoftwo
+      \else
+        \let\pdftexja@next\@secondoftwo
+      \fi
+    \else
+      \PackageError{pdftexja}{invalid direction `#1'}{%
+        Use~yoko~or~tate.\MessageBreak \@ehc}%
+      \let\pdftexja@next\@secondoftwo
+    \fi
+  \fi
+  \pdftexja@next{#2}{#3}}
+% \pdftexja@IfDirArgTF{<dir>}{T}{F}: dispatch on a direction ARGUMENT
+% (T = the `tate' branch, F = the `yoko' branch), for the box factory.
+\def\pdftexja@IfDirArgTF#1#2#3{%
+  \ifnum\pdfstrcmp{#1}{tate}=\z@
+    \let\pdftexja@next\@firstoftwo
+  \else
+    \ifnum\pdfstrcmp{#1}{yoko}=\z@
+      \let\pdftexja@next\@secondoftwo
+    \else
+      \PackageError{pdftexja}{invalid direction `#1'}{%
+        Use~yoko~or~tate.\MessageBreak \@ehc}%
+      \let\pdftexja@next\@secondoftwo
+    \fi
+  \fi
+  \pdftexja@next{#2}{#3}}
+
+%. ---------------------------------------- direction box factory
+% \pdftexja@yokobox{<body>} / \pdftexja@tatebox{<body>}: the box factory
+% for local direction switches. Contract:
+%   * typesets <body> ONCE, in a box whose frame direction is yoko /
+%     tate respectively; the surrounding direction is restored after;
+%   * cross-direction embedding is normalized to the basic geometry:
+%     a yoko box (w,h,d) placed upright in a tate frame advances h+d,
+%     with cross extent h' = w/2, d' = w - h' (exact arithmetic);
+%   * in the SAME direction as the current frame the box is returned
+%     unchanged (identity, no wrapper, one typeset pass);
+%   * for register \copy/\box re-use the direction is whatever the
+%     current frame is at unboxing time (pdfTeX has no box attributes).
+% In the shipout-rotation model the inner frame of a tate document is
+% horizontal, so the geometric transform is applied only when the OUTER
+% frame is the opposite of the requested one.
+\newbox\pdftexja@dirbox
+\long\def\pdftexja@yokobox#1{%
+  \ifnum\pdftexja@dir=0
+    #1%
+  \else
+    % yoko body inside a tate frame: normalized upright embedding.
+    % Guard the rules frame machinery for the measurement pass.
+    \global\advance\pdftexja@nest1
+    \pdftexja@setdir{0}%
+    \setbox\pdftexja@dirbox=\hbox{{#1}}%
+    \pdftexja@setdir{1}%
+    \global\advance\pdftexja@nest-1
+    \pdftexja@embed@yoko@in@tate
+  \fi}
+% \pdftexja@yokobox@strut{<ht>}{<dp>}{<body>}: yokobox with the body
+% box's height/depth SET to <ht>/<dp> before the embedding arithmetic
+% (pTeX's tcy pins the body's ht+dp at 1zw).
+\long\def\pdftexja@yokobox@strut#1#2#3{%
+  \ifnum\pdftexja@dir=0
+    #3%
+  \else
+    \global\advance\pdftexja@nest1
+    \pdftexja@setdir{0}%
+    \setbox\pdftexja@dirbox=\hbox{{#3}}%
+    \pdftexja@setdir{1}%
+    \global\advance\pdftexja@nest-1
+    \ht\pdftexja@dirbox=#1\relax
+    \dp\pdftexja@dirbox=#2\relax
+    \pdftexja@embed@yoko@in@tate
+  \fi}
+\long\def\pdftexja@tatebox#1{%
+  \ifnum\pdftexja@dir=1
+    #1%
+  \else
+    \global\advance\pdftexja@nest1
+    \pdftexja@setdir{1}%
+    \setbox\pdftexja@dirbox=\hbox{{#1}}%
+    \pdftexja@setdir{0}%
+    \global\advance\pdftexja@nest-1
+    \pdftexja@embed@tate@in@yoko
+  \fi}
+% yoko-in-tate exact embedding (the tcy primitive; also the generic
+% factory path). Body = \box\pdftexja@dirbox (w,h,d). \rotatebox{90}{B}
+% yields wd=h+d, ht=w, dp=0, with B's baseline at x=ht(B) inside the
+% result.
+\def\pdftexja@embed@yoko@in@tate{%
+  % save the body's geometry FIRST: \rotatebox's argument \box-empties
+  % \pdftexja@dirbox, so w/h/d must not be read after the rotation.
+  \pdftexja@emb@w=\wd\pdftexja@dirbox
+  \pdftexja@emb@h=\ht\pdftexja@dirbox
+  \pdftexja@emb@d=\dp\pdftexja@dirbox
+  \setbox\@tempboxa=\hbox{\rotatebox{90}{\box\pdftexja@dirbox}}%
+  % Shift so B's baseline lands on the outer reference x=0 and the
+  % cross extent (B's width) is centered on the tate baseline.
+  \setbox\@tempboxa=\hbox{%
+    \kern-\pdftexja@emb@h
+    \lower.5\pdftexja@emb@w
+    \box\@tempboxa}%
+  % advance = h+d of the body (no slack; pTeX's yoko-in-tate advance)
+  \wd\@tempboxa=\dimexpr\pdftexja@emb@h+\pdftexja@emb@d\relax
+  % cross extent: the body's width split evenly around the baseline
+  \ht\@tempboxa=\dimexpr.5\pdftexja@emb@w\relax
+  \dp\@tempboxa=\dimexpr\pdftexja@emb@w-.5\pdftexja@emb@w\relax
+  \box\@tempboxa}
+\newdimen\pdftexja@emb@w
+\newdimen\pdftexja@emb@h
+\newdimen\pdftexja@emb@d
+% tate-in-yoko exact embedding: the tate run (built horizontally in the
+% inner frame) rotated CCW so it reads top-to-bottom in the yoko page;
+% advance = the body's cross extent, cross = its run length.
+\def\pdftexja@embed@tate@in@yoko{%
+  \setbox\@tempboxa=\hbox{\rotatebox{90}{\box\pdftexja@dirbox}}%
+  \box\@tempboxa}
+% \pdftexjaBox{yoko|tate}{body}: public factory entry (one typeset pass;
+% identity in the same direction).
+\long\def\pdftexjaBox#1#2{%
+  \pdftexja@IfDirArgTF{#1}{\pdftexja@tatebox{#2}}{\pdftexja@yokobox{#2}}}
+
+%. -------------------------------------------------------- pdftexjavbox
+% \begin{pdftexjavbox}{yoko|tate}{<line width>}{<target height>} ... \end
+% A STREAMING \vbox to <target height> whose logical hsize/linewidth are
+% set to <line width> and whose body is typeset ONCE in the requested
+% direction. Cross-direction applications are normalized with the same
+% embedding arithmetic as \pdftexjaBox (the finished vbox is transformed,
+% never re-typeset). No body-argument capture (verbatim-safe).
+\newcount\pdftexja@vbox@tgt
+\newcount\pdftexja@vbox@savedir
+\def\pdftexja@vbox@begin#1#2#3{%
+  \par
+  \pdftexja@IfDirArgTF{#1}%
+    {\pdftexja@vbox@tgt=\@ne}{\pdftexja@vbox@tgt=\z@}%
+  \edef\pdftexja@vbox@savedir{\number\pdftexja@dir}%
+  \begingroup
+  \global\advance\pdftexja@nest1
+  \pdftexja@setdir{\pdftexja@vbox@tgt}%
+  \setbox\pdftexja@dirbox=\vbox to #3\bgroup
+    \hsize=#2\relax
+    \linewidth=\hsize
+    \pdftexja@state@neutral
+}
+\def\pdftexja@vbox@end{%
+  \egroup
+  \pdftexja@setdir{\pdftexja@vbox@savedir}%
+  \global\advance\pdftexja@nest-1
+  \endgroup
+  \ifnum\pdftexja@vbox@tgt=\pdftexja@vbox@savedir
+    \box\pdftexja@dirbox
+  \else
+    \ifnum\pdftexja@vbox@tgt=\@ne
+      % tate run inside a yoko frame
+      \pdftexja@embed@tate@in@yoko
+    \else
+      % yoko box inside a tate frame
+      \pdftexja@embed@yoko@in@tate
+    \fi
+  \fi}
+\newenvironment{pdftexjavbox}[3]%
+  {\pdftexja@vbox@begin{#1}{#2}{#3}}%
+  {\pdftexja@vbox@end}
+
+%. ----------------------------------------------- page direction state
+% Active page direction (0=yoko 1=tate). Main direction seeds it at load
+% time and the page lifecycle changes it; the shipout wrapper keys the
+% rotation on THIS value, never on the main direction.
+\newcount\pdftexja@pagedir
+\global\pdftexja@pagedir=\pdftexja@opt@dir
+% physical text frame captured before the kernel finalizes \@colht
+\newdimen\pdftexja@page@W
+\newdimen\pdftexja@page@H
+% page direction setter: active page direction + local direction + active
+% data prefix move together.
+\def\pdftexja@setpagedir#1{%
+  \global\pdftexja@pagedir=#1\relax
+  \pdftexja@setdir{#1}}
+
+% \pdftexjaMeasureLinePosition<current dimen><remaining dimen> and
+% \pdftexjaIfPositionKnownTF{T}{F}: logical frame position/remaining
+% line length. The values come from the package's own aux label family
+% (pdftexja@position.<n>), written on every savepos and read on the next
+% run; the first run yields current=0pt, remaining=\linewidth and
+% availability=false.
+\newcount\pdftexja@position@count
+\newif\ifpdftexja@position@known
+\newdimen\pdftexja@current@linewidth
+\newdimen\pdftexja@rest@linewidth
+% aux definitions (available when the .aux is read)
+\def\pdftexja@position@aux#1#2{%
+  \expandafter\gdef\csname pdftexja@position@#1\endcsname{#2}}
+\def\pdftexja@position@label#1#2#3{%
+  \protected@write\@auxout{}%
+    {\string\pdftexja@position@aux{#1X}{#2}}%
+  \protected@write\@auxout{}%
+    {\string\pdftexja@position@aux{#1Y}{#3}}}
+\def\pdftexja@position@ifexist#1#2#3{%
+  \expandafter\ifx\csname pdftexja@position.#1X\endcsname\relax
+    #3%
+  \else
+    #2%
+  \fi}
+\def\pdftexja@position@refX#1#2{%
+  \expandafter\ifx\csname pdftexja@position.#1X\endcsname\relax
+    #2%
+  \else
+    \csname pdftexja@position.#1X\endcsname
+  \fi}
+% first-line offset actually added by the tate shipout wrapper (explicit
+% value or the auto JFM depth - topskip)
+\def\pdftexja@firstlineoffset@applied{%
+  \ifx\pdftexja@opt@firstlineoffset\pdftexja@auto
+    \dimexpr\Cdp-\topskip\relax
+  \else
+    \dimexpr\pdftexja@opt@firstlineoffset\relax
+  \fi}
+% current line length in the physical frame; the first-line inversion is
+% applied only on a tate logical page of a tate document (the only place
+% the wrapper adds the kern).
+\def\pdftexja@calc@current@linewidth@onecolumn{%
+  \dimexpr
+    \pdftexja@position@refX{\the\pdftexja@position@count}{\z@} sp - \hoffset
+    \ifodd\c@page
+      - \oddsidemargin
+    \else
+      - \evensidemargin
+    \fi
+    \ifnum\pdftexja@opt@dir=1
+      \ifnum\pdftexja@pagedir=1
+        + \pdftexja@firstlineoffset@applied
+      \fi
+    \fi
+    - \@totalleftmargin - 1truein
+  \relax}
+\def\pdftexja@calc@current@linewidth{%
+  \dimexpr\pdftexja@calc@current@linewidth@onecolumn
+    \if@twocolumn
+      \ifdim\pdftexja@calc@current@linewidth@onecolumn
+             <\dimexpr\linewidth+\columnsep\relax\else
+        - \linewidth - \columnsep
+      \fi
+    \fi
+  \relax}
+\def\pdftexjaMeasureLinePosition#1#2{%
+  \global\advance\pdftexja@position@count\@ne
+  \pdftexja@position@ifexist{\the\pdftexja@position@count}%
+    {\pdftexja@position@knowntrue}{\pdftexja@position@knownfalse}%
+  \pdfsavepos
+  \edef\pdftexja@position@x{\the\pdflastxpos}%
+  \edef\pdftexja@position@y{\the\pdflastypos}%
+  \pdftexja@position@label{pdftexja@position.\the\pdftexja@position@count}%
+    {\pdftexja@position@x}{\pdftexja@position@y}%
+  \ifpdftexja@position@known
+    \pdftexja@current@linewidth=\pdftexja@calc@current@linewidth
+    \pdftexja@rest@linewidth=\dimexpr\linewidth-\pdftexja@current@linewidth\relax
+  \else
+    \pdftexja@current@linewidth=\z@
+    \pdftexja@rest@linewidth=\linewidth
+  \fi
+  \global#1=\pdftexja@current@linewidth
+  \global#2=\pdftexja@rest@linewidth
+}
+\def\pdftexjaIfPositionKnownTF#1#2{%
+  \ifpdftexja@position@known
+    \expandafter\@firstoftwo
+  \else
+    \expandafter\@secondoftwo
+  \fi
+  {#1}{#2}}
+
+%. ------------------------------------------------ page initialization
+% One labelled switch before the kernel finalizes the column sizes:
+% save the physical frame and set the INITIAL logical dimensions.
+% | setting         | saved W/H        | initial logical textwidth/height |
+% | physical + yoko | textwidth/height | unchanged                        |
+% | physical + tate | textwidth/height | H / W                            |
+% | logical  + yoko | textwidth/height | unchanged                        |
+% | logical  + tate | textheight/width | unchanged (consumer computed)    |
+\def\pdftexja@page@init{%
+  \ifnum\pdftexja@opt@dir=1
+    \ifnum\pdfstrcmp{\pdftexja@opt@pagelayout}{logical}=0 \relax
+      \pdftexja@page@W=\textheight
+      \pdftexja@page@H=\textwidth
+    \else
+      \pdftexja@page@W=\textwidth
+      \pdftexja@page@H=\textheight
+      \global\textwidth=\pdftexja@page@H
+      \global\textheight=\pdftexja@page@W
+    \fi
+  \else
+    \pdftexja@page@W=\textwidth
+    \pdftexja@page@H=\textheight
+  \fi
+  \pdftexja@setpagedir{\pdftexja@opt@dir}%
+}
+\AddToHook{begindocument/before}{\pdftexja@page@init}
+% update the page builder / current column dimensions from the logical
+% textwidth/textheight (the API never selects a column mode itself).
+\def\pdftexja@setbuilder{%
+  \global\hsize=\textwidth
+  \global\linewidth=\hsize
+  \global\columnwidth=\hsize
+  \global\@colht=\textheight
+  \global\@colroom=\@colht
+  \if@twocolumn
+    \global\columnwidth=\dimexpr(\textwidth-\columnsep)/2\relax
+    \global\hsize=\columnwidth
+    \global\linewidth=\hsize
+  \fi
+}
+% page direction stack: count-indexed tuples {dir}{textwidth}{textheight}
+% {columnwidth}{hsize}{linewidth}{@colht}{@colroom}
+\newcount\pdftexja@pd@ptr
+\def\pdftexja@pd@push{%
+  \global\advance\pdftexja@pd@ptr\@ne
+  \expandafter\xdef\csname pdftexja@pd@\the\pdftexja@pd@ptr\endcsname{%
+    {\number\pdftexja@pagedir}%
+    {\the\textwidth}{\the\textheight}{\the\columnwidth}%
+    {\the\hsize}{\the\linewidth}{\the\@colht}{\the\@colroom}}%
+}
+\def\pdftexja@pd@pop{%
+  \ifnum\pdftexja@pd@ptr=\z@
+    \PackageError{pdftexja}{\string\pdftexjaEndPageDirection\space without a matching begin}{%
+      The~page~direction~stack~is~empty.\MessageBreak \@ehc}%
+  \else
+    \expandafter\pdftexja@pd@restore
+      \csname pdftexja@pd@\the\pdftexja@pd@ptr\endcsname
+    \global\advance\pdftexja@pd@ptr\m@ne
+  \fi}
+\def\pdftexja@pd@restore#1{\expandafter\pdftexja@pd@restore@a#1}
+\def\pdftexja@pd@restore@a#1#2#3#4#5#6#7#8{%
+  \global\textwidth=#2\relax
+  \global\textheight=#3\relax
+  \global\columnwidth=#4\relax
+  \global\hsize=#5\relax
+  \global\linewidth=#6\relax
+  \global\@colht=#7\relax
+  \global\@colroom=#8\relax
+  \pdftexja@setpagedir{#1}%
+}
+% \pdftexjaBeginPageDirection{yoko|tate}: finish the current page, save
+% the state, switch the logical frame to the target direction's physical
+% frame, update the builder and neutralize the boundary state.
+\def\pdftexjaBeginPageDirection#1{%
+  \clearpage
+  \pdftexja@pd@push
+  \pdftexja@IfDirArgTF{#1}%
+    {\global\textwidth=\pdftexja@page@H \global\textheight=\pdftexja@page@W}%
+    {\global\textwidth=\pdftexja@page@W \global\textheight=\pdftexja@page@H}%
+  \pdftexja@setbuilder
+  \pdftexja@IfDirArgTF{#1}{\pdftexja@setpagedir{1}}{\pdftexja@setpagedir{0}}%
+  \pdftexja@state@neutral}
+% \pdftexjaEndPageDirection: finish the page, restore the saved state and
+% re-switch direction/data prefix. Unmatched End is an error.
+\def\pdftexjaEndPageDirection{%
+  \clearpage
+  \pdftexja@pd@pop
+  \pdftexja@state@neutral}
+
+%. ------------------------------------------------ tate output rotation
+% Thin wrapper around the kernel \@outputpage saved at
+% begindocument/end (so later LaTeX packages' output setup is reflected).
+% The rotation is keyed on the ACTIVE PAGE direction:
+%   tate page: \@outputbox is rotated -90 with \kern<first-line-offset>,
+%              and the furniture line width is the page height;
+%   yoko page: no rotation; the furniture line width is the furniture
+%              width (auto = the saved physical W), never the height.
+\def\pdftexja@furniturewidth{%
+  \ifx\pdftexja@opt@furniturewidth\pdftexja@auto
+    \pdftexja@page@W
+  \else
+    \dimexpr\pdftexja@opt@furniturewidth\relax
+  \fi}
+\def\pdftexja@install@output{%
+  \expandafter\let\expandafter\pdftexja@saved@outputpage\csname @outputpage\endcsname
+  \expandafter\def\csname @outputpage\endcsname{%
+    \begingroup
+      \ifnum\pdftexja@pagedir=1
+        % tate logical page: rotate the body box -90deg. The kern
+        % restores the native first-line leading (topskip-Cdp) that the
+        % rotated galley would otherwise lose.
+        \setbox\@outputbox=\hbox{%
+          \kern\pdftexja@firstlineoffset@applied
+          \rotatebox{-90}{\box\@outputbox}}%
+        \textwidth\textheight
+      \else
+        % yoko logical page inside a tate document: already in the final
+        % orientation; the furniture line keeps the saved physical width.
+        \textwidth\pdftexja@furniturewidth\relax
+      \fi
+      \pdftexja@saved@outputpage
+    \endgroup
+  }%
+}
+\ifnum\pdftexja@opt@dir=1
+  \AddToHook{begindocument/end}{\pdftexja@install@output}
+\fi
+
+\makeatother
+
+\endinput

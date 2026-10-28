@@ -178,7 +178,7 @@ cat >"$WORK/run/metrics-purity.tex" <<'EOF'
 \newdimen\ga \newdimen\gb \newdimen\gc
 \begin{document}
 \setbox0\hbox{あ}\wa=\wd0
-\pdftexjaGetMetrics{tate}\ga=\wd0 \gb=\ht0 \gc=\dp0
+\pdftexjaGetMetrics{tate}{\ga}{\gb}{\gc}
 \setbox0\hbox{あ}\wb=\wd0
 \typeout{METRICSPURITY:wd=\the\wa/\the\wb:gw=\the\ga:gh=\the\gb:gd=\the\gc}
 \ifdim\wa=\wb \typeout{METRICSPURITY:pure=yes}\else\typeout{METRICSPURITY:pure=no}\fi
@@ -288,6 +288,11 @@ return function(base_dir)
         roles = { normal = 17, latin = 83, paragraph = 201, box = 202 },
         prebreak = { [34] = 10000 }, postbreak = {}, xspacing = {},
         fullwidth_space_adjust = {}, family_identity = { mc = "tiny", gt = "tiny" } },
+      { id = "base", dir = "tate", open_bracket_pos = "zenkaku_tentsuki",
+        hanging_punctuation = false, jfm = t,
+        roles = { normal = 17, latin = 83, paragraph = 201, box = 202 },
+        prebreak = { [34] = 10000 }, postbreak = {}, xspacing = {},
+        fullwidth_space_adjust = {}, family_identity = { mc = "tiny", gt = "tiny" } },
     },
   }
 end
@@ -347,8 +352,8 @@ fi
 # --- boundary stack: Begin/End page direction in a tate document -------
 check
 cat >"$WORK/run/page-direction.tex" <<'EOF'
-\documentclass[direction=tate]{article}
-\usepackage{pdftexja}
+\documentclass{article}
+\usepackage[direction=tate]{pdftexja}
 \begin{document}
 縦の本文である。
 \pdftexjaBeginPageDirection{yoko}

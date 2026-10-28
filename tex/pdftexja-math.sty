@@ -1,0 +1,635 @@
+%%
+%% This is file 'pdftexja-math.sty'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (jlreq-pdftex.sty, math layer).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% Math layer:
+%%   - \mathmc / \mathgt (defined only when math=true)
+%%   - inline-formula capture with the tate baseline correction
+%%   - text-in-math second-layer counter for registered text wrappers
+%%   - \pdftexjaInternalMath, \pdftexjaDeclareMathTextCommand,
+%%     \pdftexjaDeclareJapaneseMathAlphabet
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pdftexja-math}[2026/10/28 v0.1 pdftexja math]
+
+\makeatletter
+
+% ------------------------------------------------ math text registry
+% Wrapper registry for the raw-primitive-box check: a \hbox/\vbox/\vtop/
+% \vcenter directly at the captured formula level is an error, but the
+% argument of a registered text wrapper is exempt.
+% Membership is a pre-computed flag plus \ifx comparisons: a \csname-keyed
+% table cannot be used here because the walk also sees the active UTF-8
+% byte macros of always-on CJK (\string would leave the rest of the byte
+% sequence inside the name scan), and the dispatch must not interleave
+% conditionals with the caller's branch bodies.
+\newif\ifpdftexja@mathtext@hit
+\def\pdftexja@mathtext@extra{}
+\def\pdftexjaDeclareMathTextCommand#1{%
+  \ifx\pdftexja@mathtext@extra\@empty
+    \edef\pdftexja@mathtext@extra{\string#1}%
+  \else
+    \edef\pdftexja@mathtext@extra{\pdftexja@mathtext@extra,\string#1}%
+  \fi}
+\def\pdftexja@ifmathtextcommand#1#2#3{%
+  \pdftexja@mathtext@hitfalse
+  \ifdefined\mathmc \expandafter\ifx\mathmc#1\pdftexja@mathtext@hittrue\fi \fi
+  \ifdefined\mathgt \expandafter\ifx\mathgt#1\pdftexja@mathtext@hittrue\fi \fi
+  \expandafter\ifx\mbox#1\pdftexja@mathtext@hittrue\fi
+  \expandafter\ifx\makebox#1\pdftexja@mathtext@hittrue\fi
+  \ifdefined\text \expandafter\ifx\text#1\pdftexja@mathtext@hittrue\fi \fi
+  \ifx\pdftexja@mathtext@extra\@empty
+  \else
+    \@for\pdftexja@w:=\pdftexja@mathtext@extra\do{%
+      \expandafter\ifx\pdftexja@w#1\pdftexja@mathtext@hittrue\fi}%
+  \fi
+  \ifpdftexja@mathtext@hit #2\else #3\fi}
+\pdftexjaDeclareMathTextCommand{\mbox}
+\pdftexjaDeclareMathTextCommand{\makebox}
+% \text is registered when amstext/amsmath has defined it (both load
+% orders), and \mathmc/\mathgt when this package defines them.
+\AddToHook{package/amsmath/after-load}{%
+  \@ifundefined{text}{}{\pdftexjaDeclareMathTextCommand{\text}}}
+\AtBeginDocument{%
+  \@ifundefined{text}{}{\pdftexjaDeclareMathTextCommand{\text}}}
+
+% ------------------------------------------------------- mathja boxes
+% \pdftexja@mathja{mc|gt}{body}:
+%   in math: \mathchoice with the four math style sizes, each branch
+%     typeset at its real size (uplatex's per-style jfam sizes) and
+%     shifted by the direction-consistent component counter
+%     ((delta_t - delta_yoko) x factor/1000);
+%   outside math: a plain family switch.
+\newbox\pdftexja@mathja@boxa
+\def\pdftexja@mathja#1#2{%
+  \ifmmode
+    \def\pdftexja@mathja@fam{#1}%
+    \def\pdftexja@mathja@body{#2}%
+    \global\setbox\pdftexja@mathja@boxa=\box\voidb@x
+    \mathchoice
+      {\pdftexja@mathja@box@save\f@size{1000}}%
+      {\pdftexja@mathja@box@use\f@size{1000}}%
+      {\pdftexja@mathja@box@wrap\sf@size{700}}%
+      {\pdftexja@mathja@box@wrap\ssf@size{500}}%
+  \else
+    {\csname #1family\endcsname #2}%
+  \fi}
+\ifnum\pdftexja@opt@math=1
+  \protected\def\mathmc#1{\pdftexja@mathja{mc}{#1}}
+  \protected\def\mathgt#1{\pdftexja@mathja{gt}{#1}}
+  \pdftexjaDeclareMathTextCommand{\mathmc}
+  \pdftexjaDeclareMathTextCommand{\mathgt}
+\fi
+% \pdftexjaInternalMath{body}: consumer-internal formulas (toc leaders,
+% tabular constructions). Formula starts inside the body take the
+% pass-through path instead of the user inline capture.
+\long\def\pdftexjaInternalMath#1{\pdftexja@math@internal{#1}}
+
+%. ------------------------------------------------ math capture
+% 数式の統一キャプチャ（active-$ 撤去・全入口を一回実行へ統合）。
+%
+% 【状態と ground truth（実測・uplatex 同一ソース bbox/showbox）】
+%   * tate 文書: 行内数式は式全体が δ_t 下げ（uplatex: \hbox{$x$} の
+%     ht/dp が raw 数式寸法からちょうど δ_t だけ下がる。δ_t =
+%     plcore.ltx:776-792 \adjustbaseline と同一式）。
+%     δ_t = (h_M+d_M−JH−JD)/2 + JD − d_M
+%     （M=現在の欧文フォントを無補正で測定、JH/JD=現JFM class 0 の
+%      高さ/深さ×zw。縦JFM は対称 h=d=0.5zw なので
+%      δ_t=(h_M+d_M−1zw)/2+0.5zw−d_M）
+%   * yoko 文書: uplatex は行内数式に一切シフトを掛けない
+%     （\ybaselineshift=0 のまま; 実測: \hbox{$x$} が raw 数式寸法と
+%      完全一致。adjustbaseline の \iftdir 分岐が tbaselineshift しか
+%      計算しないため）。→ 横組みではシフト無し・キャプチャ不要。
+%   * 数式内テキスト box（\text/\mbox/\mathmc 等、tate で横組内容）:
+%     uplatex では式全体の δ_t に加え、方向一致部品が
+%     ptex-base.ch [36.720] shift_sub_exp_box により
+%     t_baseline_shift×factor(1000/700/500) だけ逆向きに戻される。
+%     実測（jlreq 既定 \ybaselineshift=0）での部品の静止位置:
+%       net = −δ_yoko_formula（10pt: +0.35562pt 上方、14pt: +0.42934pt）
+%     ここで δ_yoko_formula は横JFM(h=0.88/d=0.12zw)で計算した
+%     adjustbaseline 値（符号は負）。pdfTeX 側の実装:
+%       counter = (δ_t − δ_yoko) × factor/1000 を部品 box に
+%       \raise で与える（式全体 −δ_t との和が静止位置 = −δ_yoko になる）。
+%   * 表示数式: 出荷回転構成のまま y-baseline 0（uplatex strip 配置
+%     一致は実測済み）。frozen@everydisplay には触れない。
+%
+% 【キャプチャ経路（cat3-$ 維持・frozen everymath 差し替え）】
+%   カーネルは数式開始時にプリミティブ everymath（= \frozen@everymath）を
+%   「1回だけ」実行する。これを {\pdftexja@math@entry} に差し替える:
+%     outer entry（guard=0・tate）: 本体を閉じ cat3-$ までトークン歩行
+%       で捕捉し、(a) カーネルの開始時処理（\aftergroup\@ignorefalse・
+%       mathlevel 更新・\check@mathfonts・ユーザー \everymath）を
+%       ちょうど1回だけ外側の空数式で実行、(b) 本体を
+%       \raise−δ_t\hbox{\m@th$<body>$} に載せ替える。
+%       \mathsurround は外側の空数式に1対だけ付く（内側は \m@th）。
+%     inner entry（guard≠0）: 同一式の再入力。素通り（何もしない）。
+%       \text 等の box 内で新しく始まる数式もこの素通り経路になり、
+%       「横組形式の部品内数式 = 無補正」という uplatex 挙動と一致する
+%       （yoko 文書の数式と同一の静止位置）。
+%   \$ は catcode 3 のままなので、moving argument・\mark・aux・bookmark
+%   でアクティブ文字展開の破綻が原理的に起こらない。
+%   \(...\) は専用 wrapper（\) は protected で delimiter scan 中に展開
+%   されないため素通りの frozen 経路では捕捉できない）。
+%   math 環境はカーネル定義 \math=\( / \endmath=\) なので \( の差し替えで
+%   自動的に同経路に載る。\ensuremath の $\relax#1$ も outer entry 経由。
+%
+% 【yoko 文書】 δ=0 かつ uplatex は無補正のため、entry は保存済みの
+%   元 frozen トークンを実行して素通りする（キャプチャなし・ノード構造
+%   も従来と byte 互換）。横組みでは raw box 検出も行わない
+%   （捕捉が存在しないため; 保証契約は縦組みの捕捉 body に対するもの）。
+%
+% 【raw primitive box 境界】 捕捉した本体のトークン歩行中、
+%   登録済み text-wrapper（\text/\mbox/\makebox/\mathmc/\mathgt/旧字体
+%   コマンド）の引数の外側に明示的な \hbox/\vbox/\vtop/\vcenter が
+%   現れたら実行前に PackageError で停止し \mbox/\text への置換を示す。
+%   wrapper 引数内・通常の {..} グループ内・マクロ展開で生成される
+%   primitive は契約外（docs/pdftex-internals.md に明記）。
+%
+% --------------------------------------------------------------------
+\newdimen\pdftexja@math@delta      % δ_t（現方向; yoko では常に 0）
+\newdimen\pdftexja@math@delta@yoko % 横JFM で計算した δ（部品 counter 用）
+\newbox\pdftexja@math@probebox
+\newbox\pdftexja@mathbox
+\newcount\pdftexja@math@grab      % one-shot guard: 0=素通り, 1=同一式再入力
+\newtoks\pdftexja@math@frozen@saved  % カーネル元 frozen トークンの複製
+\newtoks\pdftexja@math@body      % 捕捉した本体
+\newcount\pdftexja@math@depth    % 歩行中の wrapper 引数深度（未使用深度は0固定）
+\expandafter\let\expandafter\pdftexja@dollar@plain\expandafter=$%
+
+% ---- δ 計算（plcore.ltx:776-792 と同一の演算順序/sp整数演算）----
+% plcore: dimen = ht(M)+dp(M); dimen -= cHT; dimen /= 2; dimen += cdp;
+%         dimen -= dp(M)   （cHT=cht+cdp=JH+JD, cdp=JD）
+% M の測定は毎回の数式開始時（fontsize/family 変化に自動追従）。
+% JH/JD は現 JFM (.def) class 0 の h/d × 現在の zw（\pdftexja@jareg）。
+\def\pdftexja@math@setdelta{%
+  % 欧文フォント M の無補正寸法（backend-internal box: guard）
+  \global\advance\pdftexja@nest1
+  \setbox\pdftexja@math@probebox=\hbox{M}%
+  \global\advance\pdftexja@nest-1
+  % 現JFM class 0 の h/d（zw 小数列を dimexpr で実寸化）
+  \expandafter\pdftexja@math@splitcls@i\csname pdftexja@data@\pdftexja@data@prefix @class@0\endcsname
+  \@tempdima=\pdftexja@cls@h\pdftexja@jareg   % JH
+  \@tempdimb=\pdftexja@cls@d\pdftexja@jareg   % JD
+  % δ_t（現方向）
+  \pdftexja@math@delta=\ht\pdftexja@math@probebox
+  \advance\pdftexja@math@delta\dp\pdftexja@math@probebox
+  \advance\pdftexja@math@delta-\@tempdima
+  \advance\pdftexja@math@delta-\@tempdimb
+  \divide\pdftexja@math@delta\tw@
+  \advance\pdftexja@math@delta\@tempdimb
+  \advance\pdftexja@math@delta-\dp\pdftexja@math@probebox
+  % δ_yoko（横JFM h=0.88/d=0.12zw で同式; 部品 counter 用）
+  \pdftexja@math@delta@yoko=\ht\pdftexja@math@probebox
+  \advance\pdftexja@math@delta@yoko\dp\pdftexja@math@probebox
+  \advance\pdftexja@math@delta@yoko-\pdftexja@jareg
+  \divide\pdftexja@math@delta@yoko\tw@
+  \advance\pdftexja@math@delta@yoko.12\pdftexja@jareg
+  \advance\pdftexja@math@delta@yoko-\dp\pdftexja@math@probebox
+  % 横組み文書では行内数式シフト無し（uplatex 実測: ybaselineshift=0）
+  \ifnum\pdftexja@dir=0
+    \pdftexja@math@delta=\z@
+    \pdftexja@math@delta@yoko=\z@
+  \fi
+}
+% δ の再計算点は plcore と同じ「サイズ更新時」（\size@update 内の
+% \adjustbaseline と同一契約; selectfont フックは常にテキストモードで
+% 走るため M プローブが安全）。数式開始時はこのキャッシュ値を読む。
+% （数式内でのフォント変更は selectfont を経由するため同じフックで
+%  再計算される; jlreq既定では行内数式中のサイズ変更は \mathchoice
+%  分岐の hbox 内 = hmode で行われる。）
+\def\pdftexja@math@setdelta@font{%
+  % plcore の size@update は「サイズ変化時」のみ \adjustbaseline を
+  % 再実行する（ファミリ切替では tbaselineshift は変わらない:
+  % uplatex 実測 tt/sf でも数式内和文静止位置は同一）。
+  % 同じ契約で (1) JFM データがロード済み（クラスロード中でない）、
+  % かつ (2) サイズが前回と異なる場合のみ再計算する。
+  \@ifundefined{pdftexja@data@prefix@yoko}{}{%
+    \expandafter\ifx\csname pdftexja@math@lastsize\endcsname\f@size
+    \else
+      \expandafter\edef\csname pdftexja@math@lastsize\endcsname{\f@size}%
+      \pdftexja@math@setdelta
+    \fi
+  }%
+}
+\AddToHook{selectfont}{\pdftexja@math@setdelta@font}%
+\AtBeginDocument{\pdftexja@math@setdelta}%
+% class 0 メトリクス {w}{h}{d}{align}{left} の分割
+\def\pdftexja@math@splitcls#1#2#3#4#5{%
+  \def\pdftexja@cls@w{#1}\def\pdftexja@cls@h{#2}\def\pdftexja@cls@d{#3}%
+  \def\pdftexja@cls@align{#4}\def\pdftexja@cls@left{#5}%
+}
+\def\pdftexja@math@splitcls@i#1{\expandafter\pdftexja@math@splitcls#1}
+
+% ---- 捕捉入り口（frozen@everymath の中身そのもの）----
+% トークン代入のみ（\edef/\xdef 禁止: \the\everymath 起点の再展開で
+% 条件トークンの対応が崩れる——実測で "Incomplete \iffalse" を起こす。
+% toks 代入は内容を再展開しないため安全）。
+\def\pdftexja@math@entry{%
+  \ifnum\pdftexja@dir=1
+    \expandafter\pdftexja@math@entry@tate
+  \else
+    % yoko: 元 frozen トークンを実行して素通り（byte 互換・キャプチャ無し）
+    \expandafter\the\expandafter\pdftexja@math@frozen@saved
+  \fi
+}
+% tate: guard で「生の外側入口」と「同一式の内側再入力」を判別
+% カーネル/クラス内部の数式開始（tabular の $..\halign..$ 構成、
+% 目次ドットリーダーの $\m@th\mkern..$ 等）は素通りさせる:
+% LaTeX の \@tabular は \hbox\bgroup $..\halign..$ の構成で、環境全体を
+% 数式内に組み、\endtabular の $ で閉じる（latex.ltx:16554-16560）。
+% この内部 $ を捕捉すると \halign が mmode で再実行され破綻する
+% （実測: "File ended while scanning use of \pdftexja@math@scan"）。
+% 環境の begin/end でカウンタを 1/0 するグループ安全なフラグで
+% 判別する（ネスト対応; tabular/tabular* 両方の入口でインクリメント）。
+\newcount\pdftexja@math@in@array
+\def\pdftexja@math@array@flag{%
+  \global\advance\pdftexja@math@in@array\@ne
+  \aftergroup\pdftexja@math@array@unflag
+}
+\def\pdftexja@math@array@unflag{%
+  \global\advance\pdftexja@math@in@array-\@ne
+}
+% \pdftexja@math@internal{<body>}: クラス内部の数式（tabular 等の
+% フラグ保護実行）。body 内の数式開始は everymath 経路で
+% 「内部扱い = 素通り」となる。ボディ直後の即時解除で十分
+% （body は1つのグループ; \aftergroup は使わない）。
+\long\def\pdftexja@math@internal#1{%
+  \global\advance\pdftexja@math@in@array\@ne
+  #1%
+  \global\advance\pdftexja@math@in@array-\@ne
+}
+% 表示数式環境の登録（表示入口; ネイティブ処理を維持）
+\def\pdftexja@math@reg@disp#1{%
+  \expandafter\def\csname pdftexja@math@disp@#1\endcsname{1}}%
+\pdftexja@math@reg@disp{equation}%
+\pdftexja@math@reg@disp{equation*}%
+\pdftexja@math@reg@disp{align}%
+\pdftexja@math@reg@disp{align*}%
+\pdftexja@math@reg@disp{gather}%
+\pdftexja@math@reg@disp{gather*}%
+\pdftexja@math@reg@disp{multline}%
+\pdftexja@math@reg@disp{multline*}%
+\pdftexja@math@reg@disp{flalign}%
+\pdftexja@math@reg@disp{flalign*}%
+\pdftexja@math@reg@disp{alignat}%
+\pdftexja@math@reg@disp{alignat*}%
+\pdftexja@math@reg@disp{xalignat}%
+\pdftexja@math@reg@disp{xxalignat}%
+\pdftexja@math@reg@disp{split}%
+\pdftexja@math@reg@disp{aligned}%
+\pdftexja@math@reg@disp{gathered}%
+\pdftexja@math@reg@disp{cases}%
+\pdftexja@math@reg@disp{matrix}%
+\pdftexja@math@reg@disp{pmatrix}%
+\pdftexja@math@reg@disp{bmatrix}%
+\pdftexja@math@reg@disp{Bmatrix}%
+\pdftexja@math@reg@disp{vmatrix}%
+\pdftexja@math@reg@disp{Vmatrix}%
+\pdftexja@math@reg@disp{smallmatrix}%
+\pdftexja@math@reg@disp{subarray}%
+\pdftexja@math@reg@disp{eqnarray}%
+\pdftexja@math@reg@disp{eqnarray*}%
+\pdftexja@math@reg@disp{displaymath}%
+% tabular/tabular* の入口でフラグを立てる（\@tabular は latex.ltx:16560
+% の \hbox\bgroup $.. 構成; tabular* は \tabular を経由して同じ
+% \@tabular に入る。array 系パッケージが再定義しても構わないよう
+% begin document で「その時点の \@tabular」をラップする）。
+\AtBeginDocument{%
+  \let\pdftexja@math@saved@tabular\@tabular
+  \def\@tabular{\pdftexja@math@array@flag\pdftexja@math@saved@tabular}%
+}
+% 表示数式環境内の内部 $ は素通り: amsmath の equation/align 系は本体を
+% インライン数式 $..$ として組む（\endequation 内の $ と対応する）。
+% これを捕捉すると環境機構（\refstepcounter・\label・行組み立て）が
+% キャプチャ内で破綻する（実測: "Display math should end with $$" /
+% "File ended while scanning"）。表示入口は「native 処理を
+% 維持」が契約のため、これらの環境では捕捉しない。
+\def\pdftexja@math@if@dispenv{%
+  \expandafter\ifx\csname pdftexja@math@disp@\@currenvir\endcsname\relax
+    \expandafter\@secondoftwo
+  \else
+    \expandafter\@firstoftwo
+  \fi}
+\def\pdftexja@math@entry@tate{%
+  \ifnum\pdftexja@math@grab=\z@
+    \pdftexja@math@if@dispenv{%
+      % 表示数式環境（equation/align/…）の内部 $ は native 処理を維持
+      \pdftexja@math@passthrough
+    }{%
+      \ifinner
+        \ifnum\pdftexja@math@in@array=\z@
+          \expandafter\pdftexja@math@capture
+        \else
+          \expandafter\pdftexja@math@passthrough
+        \fi
+      \else
+        \expandafter\pdftexja@math@passthrough
+      \fi
+    }%
+  \fi
+}
+% 素通り: 元 frozen トークン（\aftergroup\@ignorefalse・mathlevel 更新・
+% \check@mathfonts・ユーザー \everymath）をそのまま1回実行する。
+\def\pdftexja@math@passthrough{%
+  \the\pdftexja@math@frozen@saved
+}
+% ---- 外側入口: 本体の区切り子走査捕捉 ----
+% TeX 自身の区切り付き引数走査 `#1$' を使う（旧 active-$ 実装と \( の
+% 経路で実績のある方式: 括弧対応・アクティブ byte・マクロ展開のすべてが
+% TeX の標準引数取得と同一に扱われる。walk 方式は グループ引数/CJK
+% byte 列/内部ボックス機構との干渉が相次いだため撤去）。
+% wrapper 引数（\text{..} 等）は {..} グループとして #1 内に丸ごと
+% 入るため raw box 検査の対象外（exempt と同一意味論）。
+\def\pdftexja@math@capture{%
+  \global\pdftexja@math@grab=\@ne
+  \pdftexja@math@scan
+}
+\long\def\pdftexja@math@scan#1${%
+  % raw box 検出（token level; wrapper 引数 {..} は1引数として不透過）
+  \pdftexja@math@rawcheck{#1}%
+  % カーネルの開始時処理（frozen の残り）を外側数式でちょうど1回。
+  % \aftergroup は使わない: 捕捉対象の $..$ が \leaders の直前にある
+  % 移動引数（目次の見出し等）で、aftergroup トークンがリーダーと
+  % 干渉して "Leaders not followed by proper glue" になる（実測:
+  % TOC 2パス目）。外側の空数式は直後に閉じるため、\@ignorefalse は
+  % $ の直後で即時に実行すればカーネルと同一位置・同一意味になる。
+  \advance\@math@level\@ne
+  \check@mathfonts
+  \the\everymath
+  % 外側数式を閉じる（空数式; \mathsurround 1対はここに付く）
+  \pdftexja@dollar@plain
+  \@ignorefalse
+  % 本体: 自然幅 hbox を δ 下げ（yoko では δ=0 のため無組版差）
+  \global\advance\pdftexja@nest1
+  \setbox\pdftexja@mathbox=\hbox{\m@th
+    \pdftexja@dollar@plain#1\pdftexja@dollar@plain}%
+  \global\advance\pdftexja@nest-1
+  \ifdim\pdftexja@math@delta=\z@
+    \box\pdftexja@mathbox
+  \else
+    \raise-\pdftexja@math@delta\box\pdftexja@mathbox
+  \fi
+  \global\pdftexja@math@grab=\z@
+  % 数式は欧文境界（クラス27; peek@lat と同じ意味論）
+  \global\pdftexja@lastclass=27
+}
+
+% ---- \(...\) 専用 wrapper ----
+% カーネルの \) は protected（DeclareRobustCommand）のため delimiter scan
+% 中に展開されず、素通りの frozen 経路では本体の終端が見つからない
+% （参照実装の指摘どおり）。よって \( は \) TOKEN を終端として
+% 本体を直接捕捉する専用 wrapper に差し替える。math 環境
+% （\math=\(, \endmath=\)）もこの経路に自動的に載る。
+% 本体中の raw box 検出は wrapper に限定した簡易走査（歩行と同一契約）。
+\protected\def\pdftexja@imath@paren#1\){%
+  \ifnum\pdftexja@dir=1
+    % δ は selectfont フックで計算済み（plcore の size@update 契約と同一）
+    \global\pdftexja@math@grab=\@ne
+    \pdftexja@math@rawcheck{#1}%
+    % 開始時処理1回（raw $ 経路と同じ; ここでは外側数式はまだ無いので
+    % 空数式を1つだけ開いて閉じ、\mathsurround 1対をその中に置く。
+    % \aftergroup は \leaders 干渉のため使用しない（raw 経路の注記参照））
+    \pdftexja@dollar@plain
+      \advance\@math@level\@ne
+      \check@mathfonts
+      \the\everymath
+    \pdftexja@dollar@plain
+    \@ignorefalse
+    \global\advance\pdftexja@nest1
+    \setbox\pdftexja@mathbox=\hbox{\m@th
+      \pdftexja@dollar@plain#1\pdftexja@dollar@plain}%
+    \global\advance\pdftexja@nest-1
+    \ifdim\pdftexja@math@delta=\z@
+      \box\pdftexja@mathbox
+    \else
+      \raise-\pdftexja@math@delta\box\pdftexja@mathbox
+    \fi
+    \global\pdftexja@math@grab=\z@
+    \global\pdftexja@lastclass=27
+  \else
+    % yoko: 素通り（元の \( の意味: \relax\ifmmode\@badmath\else$\fi）
+    \begingroup
+      \the\pdftexja@math@frozen@saved
+    \endgroup
+    \pdftexja@dollar@plain\relax#1\pdftexja@dollar@plain
+  \fi
+}
+% 簡易 raw 検査（\( 経路: トークンレベル・wrapper 引数は透過扱い）
+\def\pdftexja@math@rawcheck#1{%
+  \def\pdftexja@math@raw@ctx{0}%
+  \pdftexja@math@raw@loop#1\pdftexja@math@raw@stop
+}
+\def\pdftexja@math@raw@stop{\pdftexja@math@raw@stop}
+\def\pdftexja@math@raw@loop#1{%
+  \ifx\pdftexja@math@raw@stop#1%
+  \else
+    \pdftexja@math@raw@one{#1}%
+    \expandafter\pdftexja@math@raw@loop
+  \fi}
+\def\pdftexja@math@raw@one#1{%
+  \pdftexja@ifmathtextcommand{#1}%
+    {\def\pdftexja@math@raw@ctx{1}}%
+    {\ifx\makebox#1\def\pdftexja@math@raw@ctx{2}%
+     \else
+       \ifnum\pdftexja@math@raw@ctx=\z@
+         \ifx\hbox#1\pdftexja@math@rawerr{hbox}%
+         \else\ifx\vbox#1\pdftexja@math@rawerr{vbox}%
+         \else\ifx\vtop#1\pdftexja@math@rawerr{vtop}%
+         \else\ifx\vcenter#1\pdftexja@math@rawerr{vcenter}%
+         \fi\fi\fi\fi
+       \fi
+       \def\pdftexja@math@raw@ctx{0}%
+     \fi}}
+\newcount\pdftexja@math@rawerrcnt
+\def\pdftexja@math@rawerr#1{%
+  \global\advance\pdftexja@math@rawerrcnt\@ne
+  \PackageError{pdftexja}{pdfTeX~backend:~raw~primitive~box~\string#1~in~a~captured~math~formula}{%
+  pTeX~applies~its~math~baseline~adjustment~only~to~boxes~it~can~direction-tag.\MessageBreak
+  The~pdfTeX~backend~has~no~box-direction~attribute,~so~an~unmodified~raw\MessageBreak
+  \string#1~in~a~captured~formula~is~outside~the~guaranteed~path.\MessageBreak
+  Replace~it~with~\string\mbox{...}~or~\string\text{...}~(amstext),~or~put~the\MessageBreak
+  content~in~a~registered~text~wrapper.~Macro-expanded~primitive~boxes~are\MessageBreak
+  outside~the~contract~by~design.\MessageBreak
+  \@ehc}%
+}
+
+% ---- frozen@everymath 差し替え（begin document; トークン代入のみ）----
+% \toks 代入は \the を再帰展開しない（\edef は \the\everymath 起点の
+% 二段階展開で条件トークンの対応を壊す——実測: "Incomplete \iffalse"）。
+\ifnum\pdftexja@opt@mathcapture=1
+  \AtBeginDocument{%
+    \global\pdftexja@math@frozen@saved\expandafter{\the\frozen@everymath}%
+    \global\frozen@everymath{\pdftexja@math@entry}%
+    % \( 差し替え（\math/\endmath = \( /\) も同経路化）
+    \protected\def\({\relax\ifmmode\@badmath\else\expandafter\pdftexja@imath@paren\fi}%
+  }
+\fi
+
+%. ---------------- text-in-math 2層補正（tate のみ非0）----
+% 方向一致部品の counter = (δ_t − δ_yoko) × factor/1000。
+% factor: display/text=1000, script=700, scriptscript=500
+% （ptex-base.ch shift_sub_exp_box と同一係数）。
+% uplatex 実測との対応: 部品静止位置 = −δ_yoko_formula
+% （10pt: 0.35562pt 上方, 14pt: 0.42934pt 上方; 実測値）。
+\newdimen\pdftexja@tim@shift
+\newcount\pdftexja@tim@cnt
+\def\pdftexja@tim@raise#1{% #1 = factor (1000/700/500)
+  \ifnum\pdftexja@dir=1
+    \pdftexja@tim@shift=\pdftexja@math@delta
+    \advance\pdftexja@tim@shift-\pdftexja@math@delta@yoko
+    \ifdim\pdftexja@tim@shift=\z@\else
+      % sp 整数演算（δ×factor÷1000 を sp で丸める）
+      \pdftexja@tim@cnt=\pdftexja@tim@shift
+      \multiply\pdftexja@tim@cnt#1\relax
+      \divide\pdftexja@tim@cnt\@m
+      \pdftexja@tim@shift=\pdftexja@tim@cnt sp\relax
+      \kern\pdftexja@tim@shift
+    \fi
+  \fi
+}
+
+%. ---------------- mathja rework（スタイル分岐維持 + counter）----
+% \pdftexja@mathja{<mc|gt>}{<本文>}:
+%   数式内: \mathchoice の4分岐でサイズ（f@size/sf@size/ssf@size）を
+%     切り替え、対応サイズの \hbox に本文を組む（uplatex の jfam は
+%     スタイルごとに実フォントサイズで和文を組む——10pt→7pt→5pt の
+%     実測互換のため分岐維持。「box once + copy」を取ると script 環境
+%     で実サイズの縮小表現が不可能になるため、分岐ごとの組版とし、
+%     同一サイズ分岐（display/text はともに f@size）は1回の組版結果を
+%     2番目の分岐で \copy 再利用する（組版回数 4→3）。
+%     各分岐には方向一致部品の counter（factor 1000/700/500）を適用。
+%   数式外: {\<fam>family 本文}（従来どおり）。
+
+\def\pdftexja@mathja#1#2{%
+  \ifmmode
+    \def\pdftexja@mathja@fam{#1}%
+    \def\pdftexja@mathja@body{#2}%
+    \global\setbox\pdftexja@mathja@boxa=\box\voidb@x
+    \mathchoice
+      {\pdftexja@mathja@box@save\f@size{1000}}%
+      {\pdftexja@mathja@box@use\f@size{1000}}%
+      {\pdftexja@mathja@box@wrap\sf@size{700}}%
+      {\pdftexja@mathja@box@wrap\ssf@size{500}}%
+  \else
+    {\csname #1family\endcsname #2}%
+  \fi
+}
+% #1 = サイズ（pt数値マクロ）, #2 = counter factor
+% 「組むだけ」: box レジスタに本文を組む（emit は呼び出し側; レジスタの
+% 空き抜きをしないため display/text 分岐間で copy/box 共有が可能）。
+\def\pdftexja@mathja@box#1#2{%
+  \global\advance\pdftexja@nest1
+  \global\setbox\pdftexja@mathja@boxa=\hbox{%
+    \fontsize{#1}{#1}\selectfont
+    \csname\pdftexja@mathja@fam family\endcsname
+    \global\pdftexja@lastclass=93 \global\pdftexja@pend=0
+    \pdftexja@mathja@body
+  }%
+  \global\advance\pdftexja@nest-1
+  \global\pdftexja@lastclass=27
+}
+% 方向一致部品の counter（2層目）。数式モードでは \raise は直接使え
+% ないため、部品 box を raise 付きの外側 hbox で包む（mmode でも可）。
+% counter = (δ_t − δ_yoko) × factor/1000（uplatex 実測: 部品静止位置が
+% plain 位置 + (−δ_yoko) になる。raise は cross-frame 方向 = uplatex
+% の box shift_amount と同一方向）。
+\newdimen\pdftexja@tim@raise
+\def\pdftexja@tim@emit#1#2{%
+  % #1 = factor (1000/700/500), #2 = box register
+  \pdftexja@tim@raise=\z@
+  \ifnum\pdftexja@dir=1
+    \pdftexja@tim@shift=\pdftexja@math@delta
+    \advance\pdftexja@tim@shift-\pdftexja@math@delta@yoko
+    \ifdim\pdftexja@tim@shift=\z@\else
+      % sp 整数演算（δ×factor÷1000 を sp で丸める）
+      \pdftexja@tim@cnt=\pdftexja@tim@shift
+      \multiply\pdftexja@tim@cnt#1\relax
+      \divide\pdftexja@tim@cnt\@m
+      \pdftexja@tim@raise=\pdftexja@tim@cnt sp\relax
+    \fi
+  \fi
+  \ifdim\pdftexja@tim@raise=\z@
+    \copy#2%
+  \else
+    \hbox{\raise\pdftexja@tim@raise\copy#2}%
+  \fi
+}
+% emit path: counter raise wraps the branch box（factor は分岐ごと）。
+% display 分岐は \tim@emit が \box で消費し、text 分岐（同サイズ）は
+% \copy で再利用するため、同一サイズの本体組版は1回だけになる
+% （本体副作用 4→3; script/scriptscript は実サイズが必要なため別組版）。
+\def\pdftexja@mathja@box@save#1#2{%
+  \pdftexja@mathja@box{#1}{#2}%
+  \pdftexja@tim@emit{#2}\pdftexja@mathja@boxa
+}
+\def\pdftexja@mathja@box@use#1#2{%
+  \ifvoid\pdftexja@mathja@boxa
+    \expandafter\pdftexja@mathja@box\expandafter{#1}{#2}%
+  \fi
+  \pdftexja@tim@emit{#2}\pdftexja@mathja@boxa
+}
+\def\pdftexja@mathja@box@wrap#1#2{%
+  \pdftexja@mathja@box{#1}{#2}%
+  \pdftexja@tim@emit{#2}\pdftexja@mathja@boxa}
+
+% ------------------------------------------- Japanese math alphabets
+% \pdftexjaDeclareJapaneseMathAlphabet{\cs}{mc|gt}: preamble
+% registration. At the final begin-document initialization the ORIGINAL
+% Latin math alphabet is captured and wrapped: only the Japanese family
+% changes inside the argument; the math style and the Latin alphabet are
+% preserved (the wrapper delegates to the original command).
+\def\pdftexja@mathalpha@list{}
+\def\pdftexja@mathalpha@end{\pdftexja@mathalpha@end}
+\def\pdftexjaDeclareJapaneseMathAlphabet#1#2{%
+  \ifnum\pdfstrcmp{#2}{mc}=0 \relax
+  \else\ifnum\pdfstrcmp{#2}{gt}=0 \relax
+  \else
+    \PackageError{pdftexja}{invalid math alphabet family `#2'}{%
+      Use~mc~or~gt.\MessageBreak \@ehc}%
+  \fi\fi
+  \expandafter\def\csname pdftexja@mathalpha@fam@\string#1\endcsname{#2}%
+  \expandafter\ifx\csname pdftexja@mathalpha@decl@\string#1\endcsname\relax
+    \expandafter\def\csname pdftexja@mathalpha@decl@\string#1\endcsname{1}%
+    \expandafter\def\expandafter\pdftexja@mathalpha@list\expandafter{%
+      \pdftexja@mathalpha@list{#1}}%
+  \fi}
+\def\pdftexja@mathalpha@switch#1{%
+  \ifnum\pdfstrcmp{#1}{gt}=0 \relax
+    \CJKfamily{\gtdefault}%
+  \else
+    \CJKfamily{\mcdefault}%
+  \fi}
+\def\pdftexja@install@mathalphabets{%
+  \expandafter\pdftexja@mathalpha@do\pdftexja@mathalpha@list\pdftexja@mathalpha@end}
+\def\pdftexja@mathalpha@do#1{%
+  \ifx#1\pdftexja@mathalpha@end
+  \else
+    % capture the original Latin math alphabet
+    \expandafter\let\csname pdftexja@mathalpha@orig@\string#1\endcsname#1%
+    % family switch body (argument group keeps the switch local)
+    \expandafter\def\csname pdftexja@mathalpha@do@\string#1\endcsname##1{%
+      \begingroup
+        \pdftexja@mathalpha@switch{%
+          \csname pdftexja@mathalpha@fam@\string#1\endcsname}%
+        ##1%
+      \endgroup}%
+    % the public command: original alphabet, JA-only switch inside;
+    % \protected keeps moving arguments safe (the original is robust)
+    \expandafter\cs_set_protected:Npn
+      \csname\expandafter\@gobble\string#1\endcsname##1{%
+        \csname pdftexja@mathalpha@orig@\string#1\endcsname
+          {\csname pdftexja@mathalpha@do@\string#1\endcsname{##1}}}%
+    \expandafter\pdftexja@mathalpha@do
+  \fi}
+\AtBeginDocument{\pdftexja@install@mathalphabets}
+
+\makeatother
+
+\endinput

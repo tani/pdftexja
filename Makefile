@@ -34,15 +34,12 @@ JFM_VARIANTS_min      := base
 JFM_VARIANTS_jis      := base
 JFM_VARIANTS_ptexmin  := base
 
-# variant token -> file suffix ('' for base, '-b', '-z', '-bz', '-n', '-bn')
-jfm_suffix = $(if $(filter base,$1),,$(if $(filter b,$1),-b,$(if $(filter z,$1),-z,$(if $(filter bz,$1),-bz,$(if $(filter n,$1),-n,-bn)))))
-
-# payload + index file list, computed deterministically (no wildcard: a
-# wildcard is empty on a fresh checkout and would skip the build).
+# Variant ids are used verbatim in the payload file name (plan §5):
+# base,b,z,bz,n,bn -> pdftexja-jfm-<preset>-<dir>-<variant>.def
 JFM_DEFS := $(foreach p,$(JFM_PRESETS),$(TEXDIR)/pdftexja-jfm-$(p).def) \
   $(foreach p,$(JFM_PRESETS),$(foreach v,$(JFM_VARIANTS_$(p)), \
-    $(TEXDIR)/pdftexja-jfm-$(p)-yoko$(call jfm_suffix,$(v)).def \
-    $(TEXDIR)/pdftexja-jfm-$(p)-tate$(call jfm_suffix,$(v)).def))
+    $(TEXDIR)/pdftexja-jfm-$(p)-yoko-$(v).def \
+    $(TEXDIR)/pdftexja-jfm-$(p)-tate-$(v).def))
 JFM_MANIFESTS := $(foreach p,$(JFM_PRESETS), \
   $(TEXDIR)/pdftexja-jfm-$(p)-manifest.lua $(TEXDIR)/pdftexja-jfm-$(p)-assets.mk)
 
@@ -137,8 +134,8 @@ $(PDFJLTXDOC_CLASSES) &: source/pdfjltxdoc.dtx source/pdfjltxdoc.ins
 jfm: $(JFM_DEFS) $(JFM_MANIFESTS)
 
 JFM_STANDARD_PAYLOADS := $(foreach v,$(JFM_VARIANTS_standard), \
-  $(TEXDIR)/pdftexja-jfm-standard-yoko$(call jfm_suffix,$(v)).def \
-  $(TEXDIR)/pdftexja-jfm-standard-tate$(call jfm_suffix,$(v)).def)
+  $(TEXDIR)/pdftexja-jfm-standard-yoko-$(v).def \
+  $(TEXDIR)/pdftexja-jfm-standard-tate-$(v).def)
 
 $(TEXDIR)/pdftexja-jfm-standard.def $(JFM_STANDARD_PAYLOADS) \
 $(TEXDIR)/pdftexja-jfm-standard-manifest.lua \
@@ -153,7 +150,8 @@ $(TEXDIR)/pdftexja-jfm-standard-assets.mk &: \
 
 define jfm_preset_rule
 $(TEXDIR)/pdftexja-jfm-$(1).def \
-$(TEXDIR)/pdftexja-jfm-$(1)-yoko.def $(TEXDIR)/pdftexja-jfm-$(1)-tate.def \
+$(TEXDIR)/pdftexja-jfm-$(1)-yoko-base.def \
+$(TEXDIR)/pdftexja-jfm-$(1)-tate-base.def \
 $(TEXDIR)/pdftexja-jfm-$(1)-manifest.lua \
 $(TEXDIR)/pdftexja-jfm-$(1)-assets.mk &: \
     $$(DATADIR)/pdftexja-jfm-$(1).lua $$(SCRIPTS)/pdftexja-jfm-lib.lua \

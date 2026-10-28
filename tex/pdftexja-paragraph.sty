@@ -1,5 +1,13 @@
 %%
 %% This is file 'pdftexja-paragraph.sty'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (jlreq-pdftex-paragraph.sty).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
 %% Strict priority paragraph environment for the jlreq pdfTeX backend.
 %%
 %% Loaded by pdftexja.sty (never directly). User-facing environment:
@@ -69,13 +77,14 @@
 
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesPackage{pdftexja-paragraph}
-  [2026/10/25 v0.1 jlreq strict paragraph environment]
+  [2026/10/28 v0.1 pdftexja strict paragraph environment]
 \RequirePackage{pdftexja-rules}
 
 \@ifundefined{pdftexja@pairspri}{%
   \PackageError{pdftexja-paragraph}{pdftexja-rules~(P3)~not~loaded}{%
     This module is loaded by pdftexja.sty; the P3 priority registers
     are a hard prerequisite.\MessageBreak \@ehc}}{}
+\makeatletter
 
 % ============================================================================
 % 0. Scratch / node types
@@ -1046,7 +1055,7 @@
   \global\let\pdftexjapar@F@win\relax
   % the last glyph's class (captured at measure close) drives the
   % candidate series; zw from the same capture.
-  \expandafter\ifx\csname pdftexja@jfm@endadj@\pdftexjapar@lastcls\endcsname\relax
+  \expandafter\ifx\csname pdftexja@data@\pdftexja@data@prefix @endadj@\pdftexjapar@lastcls\endcsname\relax
     % no end_adjust data for this class: nothing to re-choose
   \else
     \pdftexjapar@finrank{\pdftexjapar@lastcls}%
@@ -1060,7 +1069,7 @@
 \newdimen\pdftexjapar@finzw
 \newdimen\pdftexjapar@fincand
 \newdimen\pdftexjapar@finbestslack
-\newdimen\pdftexjapar@dc
+% \pdftexjapar@dc is declared with the other scratch dimens above
 \newdimen\pdftexjapar@dd
 \newdimen\pdftexjapar@finslack
 \newif\ifpdftexjapar@finsilent
@@ -1079,7 +1088,7 @@
   \pdftexjapar@finbest=0pt
   \pdftexjapar@finbestslack=0pt
   \expandafter\pdftexjapar@finunpack
-    \csname pdftexja@jfm@endadj@#1\endcsname
+    \csname pdftexja@data@\pdftexja@data@prefix @endadj@#1\endcsname
   \pdftexjapar@fin@finish}
 % #1 = the OUTER group {{f1}{f2}}; strip once so the two field groups
 % become the next two arguments
@@ -2042,4 +2051,6 @@
   \expandafter\pdftexjapar@rb@pen@b#1}
 \def\pdftexjapar@rb@pen@b#1{\penalty#1}
 \def\pdftexjapar@clsarg{0}
+\makeatother
+
 \endinput

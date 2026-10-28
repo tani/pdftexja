@@ -1,0 +1,316 @@
+%%
+%% This is file 'pdftexja-fonts.sty'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (jlreq-pdftex.sty, font layer).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% Font / CJK / unit layer:
+%%   - bxcjkjatype load per fontset (horizontal font axis)
+%%   - always-on CJK state (metrics measurable from package load time)
+%%   - \zw/\zh as the live Japanese design size; \Cht..\Chs registers
+%%   - bold tracking, latin-family-matching policy, ja-family-scope
+%%   - vertical font profile (aux vertical fonts for tate)
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pdftexja-fonts}[2026/10/28 v0.1 pdftexja fonts and units]
+
+\makeatletter
+
+%. ------------------------------------------------ saved Latin commands
+% bxcjkjatype appends \CJKfamily{...} to \rmfamily/\sffamily/\ttfamily/
+% \normalfont unconditionally (bxcjkjatype.sty, "Add patches to
+% \rmfamily, etc."). The package owns the single family-matching policy,
+% so the unconditional patch is neutralized: the pre-bxcjkjatype
+% meanings are saved here and re-installed by the policy below.
+\let\pdftexja@orig@rmfamily\rmfamily
+\let\pdftexja@orig@sffamily\sffamily
+\let\pdftexja@orig@ttfamily\ttfamily
+\let\pdftexja@orig@normalfont\normalfont
+
+%. ------------------------------------------------------ bxcjkjatype load
+% fontset selects the HORIZONTAL font axis:
+%   ipaex-type1 -> ipaex-type1 preset (Type1 planes ipxm/ipxg)
+%   ipa         -> ipa preset (uniweight TTF chain)
+%   haranoaji   -> no preset: the font-agnostic zhmetrics TFM chain is
+%                  re-pointed at the build-time converted HaranoAji TTFs
+%   custom      -> no preset: the consumer supplies the real faces
+% noCJKpunct: the package's own punctuation spacing comes from the JFM
+% rules; CJKpunct's quanjiao kerning would double-apply.
+% \pdfstrcmp compares the whole expansion byte-wise (a plain \ifx on a
+% macro-to-char-tokens would compare only the first token pair).
+\ifnum\pdfstrcmp{\pdftexja@opt@fontset}{custom}=0 \relax
+  \RequirePackage[noCJKpunct]{bxcjkjatype}%
+\else\ifnum\pdfstrcmp{\pdftexja@opt@fontset}{haranoaji}=0 \relax
+  \RequirePackage[noCJKpunct]{bxcjkjatype}%
+  \setminchofont{pdftexja-haranoaji-mincho-ttf.ttf}%
+  \setboldminchofont{pdftexja-haranoaji-mincho-bold-ttf.ttf}%
+  \setgothicfont{pdftexja-haranoaji-gothic-ttf.ttf}%
+  \setboldgothicfont{pdftexja-haranoaji-gothic-bold-ttf.ttf}%
+  \setmarugothicfont{pdftexja-haranoaji-gothic-ttf.ttf}%
+\else
+  \expandafter\RequirePackage\expandafter[\pdftexja@opt@fontset,noCJKpunct]{bxcjkjatype}%
+\fi\fi
+
+%. --------------------------------------------------- always-on CJK state
+% Japanese literals must be measurable outside any env (char-class
+% lists, labels, notes), so CJK's encapsulation is uncapped: make its
+% \global/\active/\local prefixes really global and start the UTF8 state
+% once. State then persists file-wide.
+\makeatletter
+\let\CJK@global\global
+\let\CJK@active\global
+\let\CJK@local\global
+% The CJK family follows the fontset's horizontal preset:
+% ipaex-type1 -> ipxm/ipxg; ipa/haranoaji -> mc/gt (the uniweight TFM
+% chain); custom -> mc/gt (the consumer's profile/preamble sets faces).
+\def\pdftexja@cjkfam{ipxm}%
+\ifnum\pdfstrcmp{\pdftexja@opt@fontset}{custom}=0 \relax
+  \def\pdftexja@cjkfam{mc}%
+\else\ifnum\pdfstrcmp{\pdftexja@opt@fontset}{ipa}=0 \relax
+  \def\pdftexja@cjkfam{mc}%
+\else\ifnum\pdfstrcmp{\pdftexja@opt@fontset}{haranoaji}=0 \relax
+  \def\pdftexja@cjkfam{mc}%
+\fi\fi\fi
+\CJK@envStart{}{UTF8}{\pdftexja@cjkfam}%
+% \CJK@ignorespaces is NOT set up by envStart when entered directly
+% (CJK.sty sets it in \CJKspace, normally called from the env form).
+\CJKspace
+% CJK's lazy \CJK@input (\makeatother..\makeatletter) may have flipped
+% the @ catcode; re-issue before using @-named internals.
+\makeatletter
+
+%. --------------------------------------------------- ja-family-scope
+% The always-on \CJK@envStart above runs with the three prefixes global,
+% as required (the decoder stays active). Only then is the scope applied:
+% with `group', \CJK@global becomes \relax so \CJKfamily's stored/selected
+% family and the local CJK bold/normal state restore at group end;
+% \CJK@active/\CJK@local keep \global (the decoder is always on).
+\ifnum\pdfstrcmp{\pdftexja@opt@famscope}{group}=0 \relax
+  \let\CJK@global\relax
+\fi
+
+%. --------------------------------------------------------------- units
+% pdfTeX has no zw/zh units: the units are macros expanding to a dimen
+% register (2\zw still scans as <factor><internal dimen>).
+\newdimen\pdftexja@jareg
+% \zw/\zh are jfm.zw x S and jfm.zh x S of the ACTIVE direction data
+% (plan §5.2): MIN/JIS have zh=0.952430 while zw=1, so a single alias for
+% both units would be wrong.  The registers are recomputed whenever S
+% changes and whenever the active data prefix changes; before any data is
+% loaded the coefficients default to 1.
+\newdimen\pdftexja@zwd
+\newdimen\pdftexja@zhd
+\def\zw{\pdftexja@zwd}%
+\def\zh{\pdftexja@zhd}%
+% internal aliases used by the ported rule/glyph code
+\def\pdftexja@zw{\pdftexja@zwd}%
+\def\pdftexja@zh{\pdftexja@zhd}%
+\def\pdftexja@units@update{%
+  \pdftexja@zwd=\pdftexja@jareg
+  \pdftexja@zhd=\pdftexja@jareg
+  \@ifundefined{pdftexja@data@prefix}{}{%
+    \ifcsname pdftexja@data@\pdftexja@data@prefix @zw\endcsname
+      \pdftexja@zwd=\csname pdftexja@data@\pdftexja@data@prefix @zw\endcsname\pdftexja@jareg
+    \fi
+    \ifcsname pdftexja@data@\pdftexja@data@prefix @zh\endcsname
+      \pdftexja@zhd=\csname pdftexja@data@\pdftexja@data@prefix @zh\endcsname\pdftexja@jareg
+    \fi
+  }}
+% \Cht..\Chs are engine-provided under pTeX and LuaTeX-ja but are owned
+% here: one-time class-layout snapshots.
+\newdimen\Cht
+\newdimen\Cdp
+\newdimen\Cwd
+\newdimen\Cvs
+\newdimen\Chs
+
+%. ----------------------------------------------------- Japanese size S
+% S = \f@size x ja-scale. The selectfont hook uses the NEW \f@size but
+% must not assume the following \size@update baseline has been applied.
+% The hook runs both the size update and the NFSS-series tracking.
+\def\pdftexja@setsize{%
+  % Two steps: a single \dimexpr\f@size\pdftexja@opt@jascale pt\relax
+  % would concatenate the digit strings ("10"+"1"+"pt" = 101pt).
+  \pdftexja@jareg=\dimexpr\f@size pt\relax
+  \pdftexja@jareg=\pdftexja@opt@jascale\pdftexja@jareg
+  \pdftexja@units@update
+}
+\def\pdftexja@selectfont@hook{%
+  \pdftexja@setsize
+  \pdftexja@trackseries
+}
+\AddToHook{selectfont}{\pdftexja@selectfont@hook}%
+
+%. ------------------------------------------------------- series tracking
+% No bold IPAex Type1 face exists: bxcjkjatype's bold is the CJK
+% embolden switch. Track the current NFSS series and switch CJK bold so
+% \sffamily\gtfamily\bfseries headings embolden the kanji too.
+\def\pdftexja@trackseries{%
+  % same test as the kernel's \bfseries: a series name starting with b
+  % (b, bx; not sb), exactly like the kernel.
+  \if b\expandafter\@car\f@series\@nil
+    \expandafter\pdftexja@bold
+  \else
+    \expandafter\pdftexja@nobold
+  \fi
+}
+% bold-ja=font (default): existing CJK embolden weight selection.
+% bold-ja=gothic-medium: a bold JA request selects the gothic family at
+% medium (no embolden); the Latin bold state is NOT changed.
+\def\pdftexja@bold{%
+  \ifnum\pdftexja@opt@boldgothic=1
+    \CJKfamily{\gtdefault}%
+    \CJKnormal
+  \else
+    \CJKbold
+  \fi}
+\def\pdftexja@nobold{\CJKnormal}%
+
+%. ---------------------------------- latin-family-matching policy (one)
+% Re-install the saved kernel commands, then add the package policy:
+%   true  -> rm -> mc, sf -> gt, tt -> typewriter-ja-family provider
+%   false -> a Latin family switch leaves the JA family unchanged
+% Explicit \mcfamily/\gtfamily/\mgfamily/\CJKfamily are untouched.
+\let\rmfamily\pdftexja@orig@rmfamily
+\let\sffamily\pdftexja@orig@sffamily
+\let\ttfamily\pdftexja@orig@ttfamily
+\let\normalfont\pdftexja@orig@normalfont
+\ifnum\pdftexja@opt@latinmatch=1
+  \protected\def\rmfamily{\pdftexja@orig@rmfamily\CJKfamily{\mcdefault}}%
+  \protected\def\sffamily{\pdftexja@orig@sffamily\CJKfamily{\gtdefault}}%
+  \protected\def\ttfamily{%
+    \pdftexja@orig@ttfamily\CJKfamily{\pdftexja@opt@ttfamily}}%
+  \protected\def\normalfont{\pdftexja@orig@normalfont\CJKfamily{}}%
+\else
+  % the \let restoration above is the whole policy
+\fi
+
+%. -------------------------------------------------------- font profile
+% Vertical glyph selection / correction data source:
+%   ipaex-type1 -> pdftexja-fonts-ipaex.def
+%   ipa         -> pdftexja-fonts-ipa.def
+%   haranoaji   -> pdftexja-fonts-haranoaji.def
+%   custom      -> fontprofile=<file> (required; no silent 10pt-mincho
+%                  fallback)
+% Profile contents (generator): \pdftexja@fontprofile@(mc|gt)@shards /
+% @tfm@<n> / @enc@<n>, \pdfmapline, \pdftexja@vglyph@<HEX>, ToUnicode.
+\def\pdftexja@profile@file{}%
+\ifx\pdftexja@opt@fontprofile\@empty
+  \ifnum\pdfstrcmp{\pdftexja@opt@fontset}{custom}=0 \relax
+    \PackageError{pdftexja}{%
+      fontset=custom requires fontprofile}{%
+      The~fontset~`custom'~needs~a~profile~file~generated~by\MessageBreak
+      `pdftexja-fonts.py~--fontset~custom~--mincho~<TTF>~--gothic~<TTF>'.\MessageBreak
+      Pass~it~via~the~package~option~or~\string\pdftexjasetup{fontprofile=<file>}.\MessageBreak
+      No~silent~fallback~is~performed.\MessageBreak
+      \@ehc}%
+  \else\ifnum\pdfstrcmp{\pdftexja@opt@fontset}{ipa}=0 \relax
+    \def\pdftexja@profile@file{pdftexja-fonts-ipa.def}%
+  \else\ifnum\pdfstrcmp{\pdftexja@opt@fontset}{haranoaji}=0 \relax
+    \def\pdftexja@profile@file{pdftexja-fonts-haranoaji.def}%
+  \else
+    \def\pdftexja@profile@file{pdftexja-fonts-ipaex.def}%
+  \fi\fi\fi
+\else
+  \edef\pdftexja@profile@file{\pdftexja@opt@fontprofile}%
+\fi
+% tate without a profile is an explicit error (horizontal-only documents
+% do not require the vertical data).
+\ifx\pdftexja@profile@file\@empty
+  \ifnum\pdftexja@opt@dir=1
+    \PackageError{pdftexja}{%
+      direction=tate needs a pdfTeX font profile}{%
+      The~vertical~glyph~data~(profile~.def~+~aux~vertical~TTF/TFM/enc)\MessageBreak
+      is~required~for~tate.~Build~it~with~`make~pdftex-fonts'~(built-in\MessageBreak
+      fontsets)~or~`pdftexja-fonts.py~--fontset~custom'~(custom~fonts).\MessageBreak
+      yoko-only~documents~do~not~need~it.\MessageBreak
+      \@ehc}%
+  \fi
+\else
+  % kpathsea search only (installed tree or an explicit path).
+  \IfFileExists{\pdftexja@profile@file}{%
+    \input{\pdftexja@profile@file}%
+  }{%
+    \PackageError{pdftexja}{%
+      font profile file \pdftexja@profile@file\space is missing}{%
+      The~package~cannot~find~the~font~profile~\MessageBreak
+      \pdftexja@profile@file.\MessageBreak
+      Run~`make~pdftex-fonts'~in~the~pdftexja~source~tree~to~build~the\MessageBreak
+      built-in~profiles,~or~install~the~profile~for~your~fontset.\MessageBreak
+      \@ehc}%
+  }%
+\fi
+% tate + a profile without vertical shards: explicit error (do not
+% substitute rotation).
+\ifnum\pdftexja@opt@dir=1
+  \@ifundefined{pdftexja@fontprofile@mc@tfm@0}{%
+    \PackageError{pdftexja}{%
+      the font profile has no vertical glyph data (tate)}{%
+      The~loaded~profile~contains~no~aux~vertical~font~shards.\MessageBreak
+      Regenerate~the~profile~with~`pdftexja-fonts.py~--fontset~custom\MessageBreak
+      --mincho~<TTF>~--gothic~<TTF>~--profile~<file>'~so~the~vertical\MessageBreak
+      forms~are~built~into~the~profile.~Yoko-only~documents~may~keep~a\MessageBreak
+      profile~without~vertical~data.\MessageBreak
+      \@ehc}%
+  }{}%
+\fi
+% Auxiliary vertical font selection: follows the current CJK family
+% (gothic family == \gtdefault) and loads the shard TFM at the live S
+% (\pdftexja@jareg tracks selectfont), so footnotesize vertical
+% punctuation is really set at the reduced size.
+\def\pdftexja@aux@fam{mc}%
+\def\pdftexja@auxfont@select#1{%
+  \edef\pdftexja@aux@name{%
+    \csname pdftexja@fontprofile@\pdftexja@aux@fam @tfm@#1\endcsname}%
+  \expandafter\font\expandafter\pdftexja@auxtok
+    \csname pdftexja@aux@name\expandafter\endcsname\space
+    at\pdftexja@jareg\relax
+  \pdftexja@auxtok
+}
+\def\pdftexja@auxfont{%
+  \ifx\CJK@family\gtdefault
+    \def\pdftexja@aux@fam{gt}%
+  \else
+    \def\pdftexja@aux@fam{mc}%
+  \fi
+  \pdftexja@auxfont@select{\pdftexja@vg@shard}%
+}
+
+%. ------------------------------------ text extraction guarantee (end)
+% The profile registers per-glyph ToUnicode maps for the vertical
+% auxiliary slots; they only take effect while \pdfgentounicode=1.
+% A document that turns it off breaks the extraction guarantee, so this
+% is diagnosed explicitly at the end of the document.
+\AtEndDocument{%
+  \ifnum\pdfgentounicode=\z@
+    \PackageError{pdftexja}{%
+      \string\pdfgentounicode=0 breaks the text extraction guarantee}{%
+      The~package~registers~per-glyph~ToUnicode~maps~for~the~vertical\MessageBreak
+      auxiliary~font~slots;~they~only~take~effect~while\MessageBreak
+      \string\pdfgentounicode=1.~The~document~set~it~to~0.\MessageBreak
+      Restore~\string\pdfgentounicode=1~before~the~end~of~the~document.\MessageBreak
+      \@ehc}%
+  \fi
+}
+
+% warichu bracket defaults are CJK literals: they are installed here,
+% after the always-on CJK state is active, so their catcodes match the
+% document input (the entry only sets a sentinel).
+\ifx\pdftexja@opt@warichuopening\pdftexja@unset
+  \def\pdftexja@opt@warichuopening{（}
+\fi
+\ifx\pdftexja@opt@warichuclosing\pdftexja@unset
+  \def\pdftexja@opt@warichuclosing{）}
+\fi
+
+% live S at load time (no \normalsize call)
+\pdftexja@setsize
+
+\makeatother
+
+\endinput

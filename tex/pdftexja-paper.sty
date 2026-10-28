@@ -1,0 +1,108 @@
+%%
+%% This is file 'pdftexja-paper.sty'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%% extracted from the jlreq pdfTeX backend (jlreq-trimmarks-pdftex.def
+%% transport layer).
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% Copyright (c) 2020-2026 the jlreq project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% Shared PDF transport: stock/offset, crop drawing hook, physical
+%% rotation and page attributes. No crop POLICY (marks, bleed, parity,
+%% banner format) lives here; consumers pass the values and tokens.
+%% Loading the module changes nothing (all hooks check their provider).
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pdftexja-paper}[2026/10/28 v0.1 pdftexja paper transport]
+
+\makeatletter
+
+\newif\ifpdftexja@crop@stock
+\pdftexja@crop@stockfalse
+\newdimen\pdftexja@stock@w
+\newdimen\pdftexja@stock@h
+
+%. --------------------------------------------------------- stock/offset
+% \pdftexjaSetCropStock{<stock width>}{<stock height>}{<trim-left inset>}
+%                           {<trim-top inset>}
+% Evaluates TeX dimensions BEFORE magnification, sets the stock and page
+% size, and maps the trim origin through \hoffset/\voffset. The kernel's
+% 1in compensation is applied once, at begin document (\topmargin) and at
+% build/page/reset (\@themargin); there is only one hook each.
+\def\pdftexjaSetCropStock#1#2#3#4{%
+  \pdftexja@preambleonly{\pdftexjaSetCropStock}%
+  \pdftexja@stock@w=\dimexpr#1\relax
+  \pdftexja@stock@h=\dimexpr#2\relax
+  \pdfpagewidth=\pdftexja@stock@w
+  \pdfpageheight=\pdftexja@stock@h
+  % set the common stock registers only when another package already
+  % owns them (defining \stockwidth here would clash with geometry)
+  \@ifundefined{stockwidth}{}{\stockwidth=\pdftexja@stock@w}%
+  \@ifundefined{stockheight}{}{\stockheight=\pdftexja@stock@h}%
+  \hoffset=\dimexpr#3-1truein\relax
+  \voffset=\dimexpr#4-1truein\relax
+  \pdftexja@crop@stocktrue
+}
+\AddToHook{begindocument}{%
+  \ifpdftexja@crop@stock \advance\topmargin 1truein\relax \fi}
+\AddToHook{build/page/reset}{%
+  \ifpdftexja@crop@stock \advance\@themargin 1truein\relax \fi}
+
+%. -------------------------------------------------------- crop drawing
+% \pdftexjaSetCropDrawing{<tokens>}: one unexpanded provider, executed
+% once in shipout/background with lineskip 0, in a group, with the
+% boundary state saved and restored. The picture origin is the driver's:
+% mag=1000 -> (72.27pt,-72.27pt); otherwise the \hoffset/\voffset
+% compensation (72.27pt-\hoffset, -72.27pt+\voffset).
+\def\pdftexja@crop@drawing{}
+\def\pdftexjaSetCropDrawing#1{%
+  \pdftexja@preambleonly{\pdftexjaSetCropDrawing}%
+  \def\pdftexja@crop@drawing{#1}}
+\ifnum\mag=1000
+  \def\pdftexja@crop@origin{\put(72.27,-72.27)}
+\else
+  \def\pdftexja@crop@origin{%
+    \put(\strip@pt\dimexpr72.27pt-\hoffset\relax,%
+         \strip@pt\dimexpr-72.27pt+\voffset\relax)}
+\fi
+\AddToHook{shipout/background}{%
+  \ifx\pdftexja@crop@drawing\@empty
+  \else
+    \begingroup
+      \@ifundefined{pdftexjaBoundaryBegin}{}{\pdftexjaBoundaryBegin}%
+      \pdftexja@crop@origin
+      {\lineskip\z@skip\lineskiplimit\z@
+       \pdftexja@crop@drawing}%
+      \@ifundefined{pdftexjaBoundaryEnd}{}{\pdftexjaBoundaryEnd}%
+    \endgroup
+  \fi}
+
+%. ------------------------------------------------------ physical rotation
+% \pdftexjaClockwiseBox{body}: yoko body typeset once, returned as the
+% 90deg clockwise rotated box with the trimmarks anchor semantics
+% (wd = body ht+dp, dp = run length). This is a PHYSICAL rotation; the
+% JFM tate normalization of \pdftexjaBox is a different operation.
+\long\def\pdftexjaClockwiseBox#1{%
+  \setbox\@tempboxa=\hbox{\rotatebox{-90}{#1}}%
+  \box\@tempboxa}
+
+%. ------------------------------------------------------- page attributes
+% \pdftexjaSetPageAttributes{<tokens>}: unexpanded provider evaluated in
+% shipout/before and installed as the whole \pdfpageattr value.
+\def\pdftexja@page@attr{}
+\def\pdftexjaSetPageAttributes#1{%
+  \pdftexja@preambleonly{\pdftexjaSetPageAttributes}%
+  \def\pdftexja@page@attr{#1}}
+\AddToHook{shipout/before}{%
+  \ifx\pdftexja@page@attr\@empty
+  \else
+    \edef\pdftexja@page@attr@out{\pdftexja@page@attr}%
+    \expandafter\pdfpageattr\expandafter{\pdftexja@page@attr@out}%
+  \fi}
+
+\makeatother
+
+\endinput

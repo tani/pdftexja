@@ -42,25 +42,33 @@
 % \pdftexja@jfm@load{<index basename>}:
 %  (a) input the runtime index (metadata only: preset id, role classes,
 %      kinsoku/xspacing/family/fullwidth-space tables),
-%  (b) derive the variant id from the load-only package options
-%      ('' -> base, then 'b' for hanging-punctuation, then 'z' for
-%      zenkakunibu_nibu / 'n' for nibu_tentsuki, in that order),
-%  (c) input BOTH direction payloads
-%      pdftexja-jfm-<id>-<yoko|tate><variant suffix>.def,
+%  (b) derive the variant id from the load-only package options:
+%      base, then 'b' for hanging-punctuation, then 'z' for
+%      zenkakunibu_nibu / 'n' for nibu_tentsuki (order b, then z/n), so
+%      the ids are base, b, z, bz, n, bn,
+%  (c) input BOTH direction payloads through the index's selection axis
+%      (pdftexja-jfm-<id>-<yoko|tate>-<variant>.def),
 %  (d) select the active direction + data prefix and build the runtime
 %      codepoint dispatch tables for both directions.
 % Missing data is an explicit error (no silent fallback).
 \newcount\pdftexja@jfm@flags
 \def\pdftexja@jfm@load#1{%
   \def\pdftexja@jfm@index{#1}%
+  % the index may be given with or without its .def suffix
   \IfFileExists{\pdftexja@jfm@index.def}{%
     \typeout{pdftexja:~JFM~index~\pdftexja@jfm@index.def}%
     \input{\pdftexja@jfm@index.def}%
   }{%
-    \PackageError{pdftexja}{JFM index file \pdftexja@jfm@index.def\space is missing}{%
-      The~pdfTeX~JFM~index~for~the~selected~descriptor~is~not~installed.\MessageBreak
-      Generate~the~runtime~JFM~data~with~`make~pdftex-jfm'.\MessageBreak
-      \@ehc}%
+    \IfFileExists{\pdftexja@jfm@index}{%
+      \typeout{pdftexja:~JFM~index~\pdftexja@jfm@index}%
+      \input{\pdftexja@jfm@index}%
+    }{%
+      \PackageError{pdftexja}{%
+        JFM index file \pdftexja@jfm@index.def\space is missing}{%
+        The~pdfTeX~JFM~index~for~the~selected~descriptor~is~not~installed.\MessageBreak
+        Generate~the~runtime~JFM~data~with~`make~pdftex-jfm'.\MessageBreak
+        \@ehc}%
+    }%
   }%
   % (b) variant id: flags = 1 (hanging) + 2 (zenkakunibu_nibu) +
   % 4 (nibu_tentsuki); the 6 legal combinations are the 6 variants.
@@ -74,18 +82,18 @@
     \fi
   \fi
   \ifcase\pdftexja@jfm@flags
-    \def\pdftexja@jfm@variant{base}\def\pdftexja@jfm@suffix{}%
-  \or \def\pdftexja@jfm@variant{b}\def\pdftexja@jfm@suffix{-b}%
-  \or \def\pdftexja@jfm@variant{z}\def\pdftexja@jfm@suffix{-z}%
-  \or \def\pdftexja@jfm@variant{bz}\def\pdftexja@jfm@suffix{-bz}%
-  \or \def\pdftexja@jfm@variant{n}\def\pdftexja@jfm@suffix{-n}%
-  \or \def\pdftexja@jfm@variant{bn}\def\pdftexja@jfm@suffix{-bn}%
+    \def\pdftexja@jfm@variant{base}%
+  \or \def\pdftexja@jfm@variant{b}%
+  \or \def\pdftexja@jfm@variant{z}%
+  \or \def\pdftexja@jfm@variant{bz}%
+  \or \def\pdftexja@jfm@variant{n}%
+  \or \def\pdftexja@jfm@variant{bn}%
   \else
     \PackageError{pdftexja}{invalid JFM variant selection}{%
       open-bracket-pos=hanging-punctuation~combination~is~not~a~known~JFM\MessageBreak
       variant.~Check~the~package~options.\MessageBreak
       \@ehc}%
-    \def\pdftexja@jfm@variant{base}\def\pdftexja@jfm@suffix{}%
+    \def\pdftexja@jfm@variant{base}%
   \fi
   \@ifundefined{pdftexja@jfm@preset}{%
     \PackageError{pdftexja}{JFM index lacks \string\pdftexja@jfm@preset}{%
@@ -94,6 +102,14 @@
       \@ehc}%
     \def\pdftexja@jfm@preset{standard}%
   }{}%
+  % every descriptor must have the four required roles
+  \@for\pdftexja@role:=normal,latin,paragraph,box\do{%
+    \expandafter\ifx\csname pdftexja@jfm@role@\pdftexja@role\endcsname\relax
+      \PackageError{pdftexja}{JFM descriptor lacks the `\pdftexja@role' role}{%
+        The~required~roles~normal/latin/paragraph/box~must~all~reference~an\MessageBreak
+        existing~JFM~class.~Regenerate~the~descriptor/index.\MessageBreak
+        \@ehc}%
+    \fi}%
   % (c)+(d)
   \pdftexja@jfm@payload{yoko}%
   \pdftexja@jfm@payload{tate}%
@@ -103,19 +119,34 @@
   % only in the labelled begindocument/before hook)
   \pdftexja@setdir{\pdftexja@opt@dir}%
 }
-% one direction payload; #1 = yoko|tate
+% one direction payload; #1 = yoko|tate.
+% The index's selection axis maps (variant,direction) to the payload
+% basename (pdftexja-jfm-<id>-<dir>-<variant>.def); a missing axis or
+% missing file is an explicit error (no fallback to another variant).
 \def\pdftexja@jfm@payload#1{%
-  \edef\pdftexja@jfm@payload@file{%
-    pdftexja-jfm-\pdftexja@jfm@preset-#1\pdftexja@jfm@suffix.def}%
-  \IfFileExists{\pdftexja@jfm@payload@file}{%
-    \typeout{pdftexja:~JFM~payload~\pdftexja@jfm@payload@file}%
-    \input{\pdftexja@jfm@payload@file}%
-  }{%
-    \PackageError{pdftexja}{JFM payload file \pdftexja@jfm@payload@file\space is missing}{%
-      The~pdfTeX~JFM~payload~for~the~selected~variant~and~direction~is~not\MessageBreak
-      installed.~Generate~the~runtime~JFM~data~with~`make~pdftex-jfm'.\MessageBreak
+  \expandafter\ifx
+    \csname pdftexja@jfm@index@file@\pdftexja@jfm@variant @#1\endcsname
+    \relax
+    \PackageError{pdftexja}{JFM index has no payload for variant `%
+      \pdftexja@jfm@variant' and direction `#1'}{%
+      The~selected~open-bracket-pos/hanging-punctuation~combination~has~no\MessageBreak
+      payload~in~this~descriptor.~Generate~the~runtime~JFM~data~with\MessageBreak
+      `make~pdftex-jfm'.\MessageBreak
       \@ehc}%
-  }%
+  \else
+    \edef\pdftexja@jfm@payload@file{%
+      \csname pdftexja@jfm@index@file@\pdftexja@jfm@variant @#1\endcsname}%
+    \IfFileExists{\pdftexja@jfm@payload@file}{%
+      \typeout{pdftexja:~JFM~payload~\pdftexja@jfm@payload@file}%
+      \input{\pdftexja@jfm@payload@file}%
+    }{%
+      \PackageError{pdftexja}{%
+        JFM payload file \pdftexja@jfm@payload@file\space is missing}{%
+        The~pdfTeX~JFM~payload~for~the~selected~variant~and~direction~is~not\MessageBreak
+        installed.~Generate~the~runtime~JFM~data~with~`make~pdftex-jfm'.\MessageBreak
+        \@ehc}%
+    }%
+  \fi
   \expandafter\edef\csname pdftexja@data@prefix@#1\endcsname{%
     \pdftexja@jfm@preset @\pdftexja@jfm@variant @#1}%
 }
@@ -134,11 +165,11 @@
     \edef\pdftexja@classlist{%
       \csname pdftexja@data@\pdftexja@data@prefix @classlist\endcsname}%
   \fi
-  % define the descriptor fallback kinsoku/xspacing tables first (they
-  % are only consulted when the descriptor has no entry)
+  % build this direction's decimal codepoint dispatch (dcls@/combo@)
   \@for\pdftexja@cls:=\pdftexja@classlist\do{%
     \expandafter\pdftexja@loadclass\expandafter{\pdftexja@cls}%
   }%
+  \pdftexja@units@update
 }
 % active direction setter: 0=yoko 1=tate (global; the factory and the
 % page-direction stack re-seed the previous value themselves)
@@ -146,7 +177,9 @@
   \global\pdftexja@dir=#1\relax
   \ifnum#1=1 \global\let\pdftexja@data@prefix\pdftexja@data@prefix@tate
   \else \global\let\pdftexja@data@prefix\pdftexja@data@prefix@yoko
-  \fi}
+  \fi
+  % \zw/\zh are jfm.zw|zh x S of the ACTIVE direction (MIN/JIS zh<zw)
+  \pdftexja@units@update}
 
 %. ------------------------------------------------------- state machine
 % Last-char-class state; values are the generated .def class numbers
@@ -168,6 +201,12 @@
 % \inhibitglue interlock: 1 = suppress the next pair's glue (consumed
 % ONCE by the emitter -- real one-boundary suppression semantics)
 \newcount\pdftexja@inhibit \global\pdftexja@inhibit=0
+% \inhibitglue: real one-boundary suppression. The NEXT eligible CJK
+% boundary's JFM/auto skip is suppressed ONCE (the emitter consumes the
+% flag at the first boundary it serves, including the CJK->LA boundary
+% the peek machinery detects). Paragraph/box/math starts re-initialize
+% the flag, so a stale token never leaks into a later paragraph.
+\protected\def\inhibitglue{\global\pdftexja@inhibit=1 }
 % pending post-break penalty of the previous glyph (half of the unified
 % boundary penalty p = post(prev)+pre(next); the pre half is added at
 % emission time and the SAME p is applied to every legal candidate)
@@ -252,7 +291,7 @@
 % Group-local direction enum, 0=yoko 1=tate, switched by the box
 % factory / theindex pages; the glyph layer reads it via
 % \pdftexja@ifydir/@iftdir. The MAIN document direction seeds it
-% from \if@tate at begin document (pdftexja.sty).
+% from the package's direction option at load time.
 \newcount\pdftexja@dir \global\pdftexja@dir=0
 % neutral box-start state (boxbdd semantics: 90, no pending penalty).
 % Keep inhibit (see above); resync lastzw so the first interior
@@ -285,7 +324,7 @@
   \global\pdftexja@pend=0
   \global\pdftexja@lastzw=\pdftexja@jareg
 }
-% class-side reader variant (jlreq.cls \tatechuyoko/\　 consumers):
+% consumer-side reader variant (\tatechuyoko / full-width-space):
 % when the reader directly follows a closed user box, the observed
 % lastnodechar must read as "no preceding char" (-1), matching the
 % boxbdd semantics of the glyph-side reader above.
@@ -321,20 +360,6 @@
     \pdftexja@box@neutralize
   \fi
 }
-%. -------------------------------------------- JA<->LA xspc class table
-% jlreq.cls:1227-1237 (\__jlreq_addjaxspmode) as class numbers.
-% pre  = xkanjiskip allowed on the LEFT side only (latin -> char OK,
-%        char -> latin suppressed): iteration 9, prolonged 10, small
-%        kana 11, hiragana 15, katakana 16
-% post = allowed on the RIGHT side only (char -> latin OK,
-% everything else: both sides (ltj default xspc=3).
-\expandafter\def\csname pdftexja@xspc@pre@9\endcsname{1}%
-\expandafter\def\csname pdftexja@xspc@pre@10\endcsname{1}%
-\expandafter\def\csname pdftexja@xspc@pre@11\endcsname{1}%
-\expandafter\def\csname pdftexja@xspc@pre@15\endcsname{1}%
-\expandafter\def\csname pdftexja@xspc@pre@16\endcsname{1}%
-\expandafter\def\csname pdftexja@xspc@post@4\endcsname{1}%
-
 %. --------------------------- unified boundary emitter
 % One boundary = ONE emitter. It produces, between the previous glyph
 % and the next glyph:
@@ -372,20 +397,18 @@
 % xspc suppression:
 %  latin -> CJK blocked when curclass is postonly (4)
 %  CJK -> latin blocked when lastclass is preonly (9,10,11,15,16)
+% Descriptor semantics: xsp@<class> = none|pre|post|both, where pre
+% permits Latin->JA and post permits JA->Latin at this class.
+%   Latin -> JA : pre of the (JA) current class
+%   JA -> Latin : post of the (JA) previous class
 \def\pdftexja@emitpair@xspc{%
   \ifnum\pdftexja@lastclass=27
-    \expandafter\ifx\csname pdftexja@xspc@post@\number\pdftexja@curclass\endcsname\relax
-      \pdftexja@emitpair@main
-    \else
-      % latin -> postonly char: no glue
-    \fi
+    \pdftexja@ifxsp{pre}{\number\pdftexja@curclass}%
+    \ifnum\pdftexja@xspval=\z@ \pdftexja@emitpair@main \fi
   \else
     \ifnum\pdftexja@curclass=27
-      \expandafter\ifx\csname pdftexja@xspc@pre@\number\pdftexja@lastclass\endcsname\relax
-        \pdftexja@emitpair@main
-      \else
-        % preonly char -> latin: no glue
-      \fi
+      \pdftexja@ifxsp{post}{\number\pdftexja@lastclass}%
+      \ifnum\pdftexja@xspval=\z@ \pdftexja@emitpair@main \fi
     \else
       \pdftexja@emitpair@main
     \fi
@@ -518,6 +541,22 @@
 % finite; fil orders live only in the plus/minus parts, which are
 % read separately via \gluestretch/\glueshrink).
 \def\pdftexja@ksnatsplit#1 #2\relax{#1}
+
+% ------------------------------------------- data-namespace pair bodies
+% Generated pair payloads call one of these two with their fields; both
+% fill the SAME scratch registers \pdftexja@pairfields sets, so the
+% evaluator/emitter never needs to know the payload's record kind.
+\def\pdftexja@data@glue#1#2#3#4#5#6#7#8#9{%
+  \pdftexja@pairfields{#1}{#2}{#3}{#4}{#5}{#6}{#7}{#8}{#9}}
+% kern record: amount (zw coefficient) + ratio; no companion, no
+% priority (a defined kern keeps its node even at amount 0)
+\def\pdftexja@data@kern#1#2{%
+  \pdftexja@parratio=#2pt\relax
+  \pdftexja@blendzw{#1}\pdftexja@nat
+  \pdftexja@str=\z@ \pdftexja@shr=\z@
+  \global\pdftexja@pairspri=\z@ \global\pdftexja@pairshpri=\z@
+  \global\pdftexja@knat=\z@ \global\pdftexja@kstr=\z@
+  \global\pdftexja@kshr=\z@}
 % blendzw{<zw-number>}{<target dimen>}: target = x * blended zw with
 %   ltj-jfmglue.lua:812-857; b == a here because both sides share the
 %   single jlreq JFM and its ratio, so the average halves b).
@@ -544,14 +583,10 @@
 \newcount\pdftexja@bpen
 \def\pdftexja@boundaryp{%
   \pdftexja@bpen=0
-  \expandafter\ifx\csname pdftexja@kin@post@\number\pdftexja@lastclass\endcsname\relax
-  \else
-    \pdftexja@bpen=\csname pdftexja@kin@post@\number\pdftexja@lastclass\endcsname\relax
-  \fi
-  \expandafter\ifx\csname pdftexja@kin@pre@\number\pdftexja@curclass\endcsname\relax
-  \else
-    \advance\pdftexja@bpen\csname pdftexja@kin@pre@\number\pdftexja@curclass\endcsname\relax
-  \fi
+  \pdftexja@getkin{post}{\number\pdftexja@lastclass}%
+  \advance\pdftexja@bpen\pdftexja@kinval
+  \pdftexja@getkin{pre}{\number\pdftexja@curclass}%
+  \advance\pdftexja@bpen\pdftexja@kinval
 }
 % end_adjust candidate walker state
 \newbox\pdftexja@charbox
@@ -649,34 +684,37 @@
 }
 
 %. -------------------------------- kinsoku per-class penalty tables
-% The class-number tables below are the jlreq.cls defaults (the same
-% lists jlreq.cls passes to \__jlreq_setpost/prebreakpenalty). They are
-% the FALLBACK: at load time, if the loaded .def carries its own
-% kin@pre@<n>/kin@post@<n> data (per the data contract comment above),
-% the .def values win (the loader below re-keys them). Runtime
-% \jlreqsetup kinsoku keys WRITE into these very tables via
-% jlreq.cls's aux definitions, so setup changes take effect.
-% post-break 10000 (char must not END a line):
-%   opening brackets (1), prefixed abbreviations (12)
-% pre-break 10000 (char must not START a line):
-%   closing brackets (2), hyphens (300,301,302 -- class 3 in jlreq.cls),
-%   dividing punct (4), middle dots (5), full stops (6), commas (7),
-%   inseparable (8: jlreq.cls sets pre only, batch prohibition note),
-%   iteration marks (9), prolonged sound mark (10), small kana (11)
-\expandafter\def\csname pdftexja@kin@post@1\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@post@12\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@2\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@4\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@5\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@6\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@7\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@8\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@9\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@10\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@11\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@300\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@301\endcsname{10000}%
-\expandafter\def\csname pdftexja@kin@pre@302\endcsname{10000}%
+% The penalties are DESCRIPTOR data: the JFM index emits
+% \pdftexja@jfm@kin@pre@<class> / \pdftexja@jfm@kin@post@<class> for
+% every class (0 when the class has no prohibition). No built-in class
+% table exists in the runtime; a missing entry reads as 0.
+\newcount\pdftexja@kinval
+\def\pdftexja@getkin#1#2{% #1=pre|post, #2=class -> \pdftexja@kinval
+  \expandafter\ifx\csname pdftexja@jfm@kin@#1@#2\endcsname\relax
+    \pdftexja@kinval=\z@
+  \else
+    \pdftexja@kinval=\csname pdftexja@jfm@kin@#1@#2\endcsname\relax
+  \fi}
+% Latin<->JA xspacing permission: descriptor data
+% \pdftexja@jfm@xsp@<class> = none|pre|post|both (absent = both).
+% #1=pre (Latin->JA) | post (JA->Latin) -> \pdftexja@xspval 0/1.
+\newcount\pdftexja@xspval
+\def\pdftexja@ifxsp#1#2{%
+  \pdftexja@xspval=\z@
+  \expandafter\ifx\csname pdftexja@jfm@xsp@#2\endcsname\relax
+    \pdftexja@xspval=\@ne
+  \else
+    \ifnum\pdfstrcmp{\csname pdftexja@jfm@xsp@#2\endcsname}{none}=0 \relax
+    \else
+      \ifnum\pdfstrcmp{\csname pdftexja@jfm@xsp@#2\endcsname}{both}=0 \relax
+        \pdftexja@xspval=\@ne
+      \else
+        \ifnum\pdfstrcmp{\csname pdftexja@jfm@xsp@#2\endcsname}{#1}=0 \relax
+          \pdftexja@xspval=\@ne
+        \fi
+      \fi
+    \fi
+  \fi}
 
 %. ------------------------------------------------ post-break scratch
 % (kept for external probes/tests; the emitter now computes p on the
@@ -839,7 +877,7 @@
   \pdftexja@walklist{chars}{#1}%
   \pdftexja@walklist{combo}{#1}%
 }
-. ------------------------------------------------------ runtime lookup
+%. ------------------------------------------------------ runtime lookup
 % \pdftexja@setclassof{<byte>}: CJK.sty の内部 \CJKsymbol は
 % 「\CJK@plane（16進2桁のプレーン接頭）×256 + バイト値」形式で文字を渡す
 % （例: 「= U+300C → plane "30", byte 12 → 0x30*256+12 = 12300）。
@@ -932,6 +970,17 @@
     \pdftexja@nat=\pdftexja@ksnat\relax
   \fi
 }
+% \pdftexjaGetSpacing{<JA-JA glue>}{<JA-Latin glue>}: evaluate the
+% current providers with the caller's JA size into two skips. No state,
+% provider or emitted node is changed (the target skips are the caller's).
+\newskip\pdftexja@getspacing
+\def\pdftexjaGetSpacing#1#2{%
+  \pdftexja@getspacing=\pdftexja@kanjiskip\relax
+  #1=\pdftexja@getspacing
+  \pdftexja@getspacing=\pdftexja@xkanjiskip\relax
+  #2=\pdftexja@getspacing
+}
+
 % Latin adjacency: when a CJK glyph is decoded at a
 % paragraph/box head (lastclass=90) directly after a LATIN run
 % (lastnodetype=0, a char node), the preceding latin text is treated
@@ -996,7 +1045,8 @@
 % removes a FOREIGN zero-natural glue before a prebreak char; real,
 % stretchy or negative user glue is never touched) then the boundary.
 \def\pdftexja@beforeglyph{%
-  \expandafter\ifx\csname pdftexja@kin@pre@\number\pdftexja@curclass\endcsname\relax
+  \pdftexja@getkin{pre}{\number\pdftexja@curclass}%
+  \ifnum\pdftexja@kinval=\z@
   \else
     \ifnum\lastnodetype=11
       \ifdim\lastskip=0pt
@@ -1146,6 +1196,15 @@
 % overfull box.
 \def\pdftexja@glyph#1{%
   \ifmmode
+    \ifnum\pdftexja@opt@mathcapture=\z@
+      \PackageError{pdftexja}{%
+        Japanese text in math is not allowed (math-capture=false)}{%
+        The~package~option~math-capture=false~disables~the~automatic\MessageBreak
+        Japanese~formula~capture,~so~a~bare~Japanese~character~inside~math\MessageBreak
+        has~no~defined~layout.~Wrap~it~in~a~registered~math~text~command\MessageBreak
+        (e.g.~\string\mathmc{...}~or~\string\text{...}).\MessageBreak
+        \@ehc}%
+    \fi
     % 数式内: \hboxに包んで出す．数式中の\charはバイト値を「ASCIIのmathcode」
     % で再解釈してしまう（あ=U+3042→サブフォントバイト0x42が欧文フォントの
     % 「B」と化ける）ため、\charがテキストモード扱いに戻る\hboxが必須．
@@ -1158,7 +1217,7 @@
     \hbox{\pdftexja@orig@CJKsymbol{#1}}%
     \global\advance\pdftexja@nest-1
   \else
-    \if@tate
+    \ifnum\pdftexja@dir=1
       \pdftexja@glyph@tate{#1}%
     \else
       \expandafter\ifx\csname pdftexja@data@\pdftexja@data@prefix @class@\number\pdftexja@curclass\endcsname\relax
@@ -1335,25 +1394,6 @@
 }
 \def\pdftexja@cls@h{0.5}%
 \def\pdftexja@cls@d{0.5}%
-% \pdftexja@pdftex@tate@chtc@dp -- jlreq.cls measures \Cht/\Cdp via
-% \hbox{阿} at class load (before begin document); under the pdfTeX
-% tate path the glyph layer gives horizontal-metric box extents, not
-% the pTeX \cht/\cdp (= vertical JFM class-0 h/d). This helper reads
-% the tate class-0 h/d from the generated JFM data (already input by
-% the time jlreq.cls reaches its measurement) and hands them to the
-% class, which applies them against the current zw. Called ONLY in
-% the d+tate branch of the class measurement.
-\def\pdftexja@cls@h{}
-\def\pdftexja@cls@d{}
-\def\pdftexja@pdftex@tate@chtc@dp#1{%
-  \expandafter\pdftexja@tate@chtc@dp@split#1%
-}
-\def\pdftexja@tate@chtc@dp@split#1#2#3#4#5{%
-  \def\pdftexja@cls@h{#2}%
-  \def\pdftexja@cls@d{#3}%
-  \setlength\Cht{\pdftexja@cls@h\pdftexja@jareg}%
-  \setlength\Cdp{\pdftexja@cls@d\pdftexja@jareg}%
-}
 % leading spacer: absent for left (glyph flush left), \hss otherwise
 \def\pdftexja@placealign{%
   \def\pdftexja@tmpb{left}%
@@ -1374,6 +1414,87 @@
   \fi
   {\hss}%
 }
+
+%. --------------------------------------------------- public state APIs
+% \pdftexjaGetMetrics{yoko|tate}<wd dimen><ht dimen><dp dimen>: normal
+% role class dimensions of the NAMED direction's payload, scaled by the
+% current Japanese size. No direction switch, no glyph emission, no
+% boundary state change; fully group-protected (\global target writes
+% only). Undefined class data yields zero dimensions.
+\def\pdftexjaGetMetrics#1#2#3#4{%
+  \begingroup
+    \@ifundefined{pdftexja@data@prefix@#1}{%
+      \PackageError{pdftexja}{JFM direction `#1' is not loaded}{%
+        Use~yoko~or~tate.\MessageBreak \@ehc}%
+      \global#2=\z@ \global#3=\z@ \global#4=\z@
+    }{%
+      \expandafter\edef\expandafter\pdftexja@metrics@prefix
+        \expandafter{\csname pdftexja@data@prefix@#1\endcsname}%
+      \expandafter\ifx\csname pdftexja@jfm@role@normal\endcsname\relax
+        \global#2=\z@ \global#3=\z@ \global#4=\z@
+      \else
+        \edef\pdftexja@metrics@cls{\csname pdftexja@jfm@role@normal\endcsname}%
+        \expandafter\ifx
+          \csname pdftexja@data@\pdftexja@metrics@prefix @class@\pdftexja@metrics@cls\endcsname
+          \relax
+          \global#2=\z@ \global#3=\z@ \global#4=\z@
+        \else
+          \expandafter\pdftexja@metrics@split
+            \csname pdftexja@data@\pdftexja@metrics@prefix @class@\pdftexja@metrics@cls\endcsname
+          \global#2=\pdftexja@cls@w\pdftexja@jareg
+          \global#3=\pdftexja@cls@h\pdftexja@jareg
+          \global#4=\pdftexja@cls@d\pdftexja@jareg
+        \fi
+      \fi
+    }%
+  \endgroup}
+\def\pdftexja@metrics@split#1{\expandafter\pdftexja@splitcls#1}
+% \pdftexjaBoundaryBegin / \pdftexjaBoundaryEnd: save/restore the
+% out-of-flow boundary tuple {lastclass}{lastnodechar}{pend}{inhibit}
+% {dir}{lastzw}{glyphmark}{lastkern}. \lastkern is TeX-owned and can only
+% be recorded, not restored (callers re-emit their own net-zero marker).
+% Unmatched End is an error.
+\newcount\pdftexja@boundary@ptr
+\def\pdftexjaBoundaryBegin{%
+  \global\advance\pdftexja@boundary@ptr\@ne
+  \expandafter\xdef\csname pdftexja@boundary@\the\pdftexja@boundary@ptr\endcsname{%
+    {\number\pdftexja@lastclass}%
+    {\number\pdftexja@lastnodechar}%
+    {\number\pdftexja@pend}%
+    {\number\pdftexja@inhibit}%
+    {\number\pdftexja@dir}%
+    {\the\pdftexja@lastzw}%
+    {\number\pdftexja@glyphmark}%
+    {\the\lastkern}}%
+}
+\def\pdftexjaBoundaryEnd{%
+  \ifnum\pdftexja@boundary@ptr=\z@
+    \PackageError{pdftexja}{\string\pdftexjaBoundaryEnd\space without a matching begin}{%
+      The~boundary~stack~is~empty.\MessageBreak \@ehc}%
+  \else
+    \expandafter\pdftexja@boundary@restore
+      \csname pdftexja@boundary@\the\pdftexja@boundary@ptr\endcsname
+    \global\advance\pdftexja@boundary@ptr\m@ne
+  \fi}
+\def\pdftexja@boundary@restore#1{%
+  \expandafter\pdftexja@boundary@restore@a#1}
+\def\pdftexja@boundary@restore@a#1#2#3#4#5#6#7#8{%
+  \global\pdftexja@lastclass=#1\relax
+  \global\pdftexja@lastnodechar=#2\relax
+  \global\pdftexja@pend=#3\relax
+  \global\pdftexja@inhibit=#4\relax
+  \global\pdftexja@lastzw=#6\relax
+  \global\pdftexja@glyphmark=#7\relax
+  \pdftexja@setdir{#5}%
+}
+% \pdftexjaInsertionMetrics{body}: typeset body once with the insertion
+% logical-glyph metric mode on, restoring the previous mode afterwards.
+\long\def\pdftexjaInsertionMetrics#1{%
+  \begingroup
+    \global\advance\pdftexja@insctx\@ne
+    #1%
+    \global\advance\pdftexja@insctx\m@ne
+  \endgroup}
 
 %. -------------------------------------------------------- installation
 % Everything touching CJK/bxcjkjatype definitions must run AFTER those
@@ -1464,6 +1585,6 @@
 }
 
 
-% NB: jlreq.cls reads the backend chain mid-class with @ as a letter;
-% keep that state (no \makeatother here), like pdftexja.sty.
+\makeatother
+
 \endinput
