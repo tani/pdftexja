@@ -26,14 +26,14 @@
 % \expandafter\@firstoftwo idiom inside another conditional's branch hands
 % the outer \else/\fi to \@firstoftwo and runs both branches.
 \def\pdftexjaIfDirectionTF#1#2#3{%
-  \ifnum\pdfstrcmp{#1}{tate}=\z@
+  \ifnum\pdfstrcmp{#1}{tate}=0 
     \ifnum\pdftexja@dir=\@ne
       \let\pdftexja@next\@firstoftwo
     \else
       \let\pdftexja@next\@secondoftwo
     \fi
   \else
-    \ifnum\pdfstrcmp{#1}{yoko}=\z@
+    \ifnum\pdfstrcmp{#1}{yoko}=0 
       \ifnum\pdftexja@dir=\z@
         \let\pdftexja@next\@firstoftwo
       \else
@@ -49,10 +49,10 @@
 % \pdftexja@IfDirArgTF{<dir>}{T}{F}: dispatch on a direction ARGUMENT
 % (T = the `tate' branch, F = the `yoko' branch), for the box factory.
 \def\pdftexja@IfDirArgTF#1#2#3{%
-  \ifnum\pdfstrcmp{#1}{tate}=\z@
+  \ifnum\pdfstrcmp{#1}{tate}=0 
     \let\pdftexja@next\@firstoftwo
   \else
-    \ifnum\pdfstrcmp{#1}{yoko}=\z@
+    \ifnum\pdfstrcmp{#1}{yoko}=0 
       \let\pdftexja@next\@secondoftwo
     \else
       \PackageError{pdftexja}{invalid direction `#1'}{%
@@ -212,14 +212,14 @@
 % being SHIPPED (the top of the page-direction stack), as opposed to
 % \pdftexjaIfDirectionTF which answers about the local text frame.
 \def\pdftexjaIfPageDirectionTF#1#2#3{%
-  \ifnum\pdfstrcmp{#1}{tate}=\z@
+  \ifnum\pdfstrcmp{#1}{tate}=0 
     \ifnum\pdftexja@pagedir=\@ne
       \let\pdftexja@next\@firstoftwo
     \else
       \let\pdftexja@next\@secondoftwo
     \fi
   \else
-    \ifnum\pdfstrcmp{#1}{yoko}=\z@
+    \ifnum\pdfstrcmp{#1}{yoko}=0 
       \ifnum\pdftexja@pagedir=\z@
         \let\pdftexja@next\@firstoftwo
       \else

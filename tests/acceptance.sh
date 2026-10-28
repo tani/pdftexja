@@ -67,6 +67,18 @@ sh "$PDFTEXJA/tests/staged-proof.sh" --texmf "$P" --jlreq-tree "$J" \
   >"$STAGE/provenance.log" 2>&1 \
   || { echo "FAIL: staged provenance"; tail -12 "$STAGE/provenance.log"; fail=1; }
 
+step "5. jlreq consumer suite (class-level gates)"
+if [ -x "$JLREQ/tests/run-pdftex-tests.sh" ] || [ -f "$JLREQ/tests/run-pdftex-tests.sh" ]; then
+  if ( cd "$JLREQ" && env PDFTEXJA_TEXMF="$P" JLREQ_TEXMF="$J" \
+         sh tests/run-pdftex-tests.sh ) >"$STAGE/jlreq-suite.log" 2>&1; then
+    echo "PASS: jlreq consumer suite"
+  else
+    echo "FAIL: jlreq consumer suite"; tail -20 "$STAGE/jlreq-suite.log"; fail=1
+  fi
+else
+  echo "SKIP: jlreq consumer suite missing"; fail=1
+fi
+
 echo
 if [ "$fail" -ne 0 ]; then
   echo "ACCEPTANCE: FAILED (logs under $STAGE)"

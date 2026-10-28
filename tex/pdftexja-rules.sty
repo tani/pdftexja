@@ -1235,9 +1235,13 @@
     % The dispatch goes through a one-token body macro so the argument
     % scan of \pdftexja@eatig reaches the INPUT (the original token),
     % not this macro's own body (\else etc.).
-    \expandafter\pdftexja@peek@ig
+    % No \expandafter here: the next token in the stream is the CALLER's
+    % follower (possibly its \fi), and \expandafter would expand it and close
+    % the caller's conditional early ("Extra \else" when a CJK glyph is the
+    % last token of a branch, e.g. two \today calls in one document).
+    \pdftexja@peek@ig
   \else
-    \expandafter\pdftexja@peek@rest
+    \pdftexja@peek@rest
   \fi
 }
 \def\pdftexja@peek@ig{\pdftexja@eatig}

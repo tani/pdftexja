@@ -48,6 +48,7 @@ jlreq:
 |---|---|---|---|
 | R9 | 縦組 jlreq が private state 参照で停止 | `\jlreqpdf@…` **107 箇所 / 20 ブロック**（units 624–664, savepos 757–887, para reset 1202–1208, UTF8 1494–1651, size 1762–1774, C* 1825–1851, warichu 4604–4870, warichu keys, TCY/jidori/akigumi 6997–7209, reference 7317–7477, insertion 7607–7645, ai-mark 3998–4061, index 6694–6745, math internal 6637–6640） | 旧 backend のアルゴリズム本体が class に残存（plan split §3 の除去対象） |
 | R10 | 旧 backend が現役 | `jlreq-pdftex{,-rules,-ruby,-paragraph}.sty` が install/TDS 対象に残る | 未削除（re-export shim は作らない） |
+| R15 | 分岐末尾の CJK グリフで呼び手の条件文が壊れる | 最小再現: `\iftrue\jlreq@iftdir{X}{\number\year 年}\fi` を2回 → `! Extra \else`。1回では通る。`\pdftexjaIfDirectionTF` の外側 `\ifnum` が、CJK デコーダの `\futurelet` ペーくが呼び手の `\fi` を `\ifx` のオペランドとして読む際に閉じられ、以降が1段ずれる（`\pdftexjaIfDirectionTF ... \fi \else` の位置表示で確認）。注入した `\typeout` では両呼び出しとも `arg=[tate] cmp=[0]` で比較自体は真 | 次段: peek の実装を「フォロワを `\ifx` のオペランドにしない」形（意味文字列の比較、または `\fi`/`\else`/`\or` を検出したら peek を中止）へ変更する。**閾値ではなく実装の欠陥**。jlreq の date gate 2 件がこれに依存 |
 | R14 | 縦組の**位置**ゲートが無い | 縦組は text 一致・グリフ被覆・クラス版面値で検証しているが、列位置の比較は未実装。実測: jtbook page1 の x クラスタ間隔は 15.4/16.9pt の実列間に 1.1–2.0pt のサブセル分割が混在し、単純な「最頻値/中央値」はどちらも artefact になる | 必要作業: pdftexja の回転ガリ―を文書座標系へ戻す写像を比較器に実装し、その上で列ピッチを 0.05pt で比較する（閾値ではなく計測基盤の追加） |
 | R13 | crop transport が委譲していない | `jlreq-trimmarks.sty` / `jlreq-trimmarks-pdftex.def` が自前で stock/`\pdfpageattr`/回転を実装 | `\pdftexjaSetCropStock/SetCropDrawing/SetPageAttributes/ClockwiseBox` へ委譲すべき（plan §7.2） |
 

@@ -106,9 +106,8 @@
 % Storage:
 %   \pdftexja@utf@cands@<n>          candidates for leading byte <n>, where
 %                                    <n> is the DECIMAL byte value
-%   \pdftexja@utf@c{<rest>}{<target>} one candidate; <rest> is the
-%                                    canonical (catcode 12) byte run after
-%                                    the leading byte
+%   \pdftexja@utf@c{<rest>}{<target>} one candidate; <rest> is the byte run
+%                                    after the leading byte
 %   \<byte>                          the control symbol, defined once to
 %                                    \pdftexja@utf@go{<n>}
 %
@@ -118,14 +117,18 @@
 % re-frames the per-candidate groups on each pass and drops an exhausted
 % candidate; executing the list cannot.
 %
-% Bytes are compared by character CODE (\ifnum), never by \ifx: the stored
-% spelling is a canonical catcode-12 byte sequence, while the bytes read
-% from the input are the ACTIVE characters CJK installed.
+% Consumed bytes are compared by character CODE (\ifnum`#1=...), so a
+% stored byte and the byte read from the input match whatever their catcodes
+% are.  The lookahead cannot consume, so there the comparison is \ifx on
+% the unread token and the stored head byte - two single-character tokens
+% taken from the same catcode table.
 %
-% A spelling that is a strict prefix of another spelling with the same
-% leading byte is rejected at dispatch time (ambiguous spelling): the
-% short spelling is complete while a longer one is still open, and TeX
-% cannot push the lookahead token back.
+% One spelling may be a strict prefix of another with the same leading
+% byte (e.g. `\西暦' and `\西暦true'): the LONGEST match wins.  When a
+% complete candidate coexists with longer ones, \futurelet looks at the
+% next token without consuming it - descending if it continues a longer
+% spelling, and otherwise firing the complete one and leaving that token
+% in the stream untouched.
 \def\pdftexja@utf@c#1#2{\pdftexja@utf@op{#1}{#2}}
 \def\pdftexja@utf@op#1#2{}
 \def\pdftexja@utf@list{}
@@ -133,6 +136,8 @@
 \def\pdftexja@utf@candlist{}
 \newif\ifpdftexja@utf@hit
 \newif\ifpdftexja@utf@open
+\newif\ifpdftexja@utf@extend
+\newif\ifpdftexja@utf@char
 
 % public registration (preamble only)
 \def\pdftexjaDeclareUTFCommand#1#2{%
@@ -186,9 +191,9 @@
       The~spelling~is~already~registered.\MessageBreak \@ehc}%
   \fi}
 % append a candidate to \pdftexja@utf@candlist.  The stored spelling is
-% kept as the byte tokens themselves; every comparison is made on their
-% character codes, so stored and input bytes are compared in one and the
-% same form whatever their catcodes are.
+% kept as the byte tokens themselves; the filter compares their character
+% codes, so a stored byte and an input byte agree whatever their catcodes
+% are.
 \def\pdftexja@utf@addcand#1#2{%
   \toks@\expandafter{\pdftexja@utf@candlist}%
   \toks@\expandafter{\the\toks@\pdftexja@utf@c{#1}{#2}}%
@@ -224,7 +229,7 @@
   \let\pdftexja@utf@next\relax
   \ifpdftexja@utf@hit
     \ifpdftexja@utf@open
-      \let\pdftexja@utf@next\pdftexja@utf@ambiguous
+      \let\pdftexja@utf@next\pdftexja@utf@peek
     \else
       \let\pdftexja@utf@next\pdftexja@utf@target
     \fi
@@ -232,17 +237,61 @@
     \let\pdftexja@utf@next\pdftexja@utf@readnext
   \fi
   \pdftexja@utf@next}
-\def\pdftexja@utf@ambiguous{%
-  \PackageError{pdftexja}{ambiguous UTF command spelling}{%
-    A~registered~spelling~is~a~strict~prefix~of~another~spelling~with\MessageBreak
-    the~same~leading~byte.~TeX~cannot~push~back~the~lookahead~token,\MessageBreak
-    so~this~run~cannot~be~dispatched.~Register~only~one~of~the~two\MessageBreak
-    spellings.\MessageBreak \@ehc}}
+% A complete spelling coexists with longer spellings sharing the leading
+% byte: longest match wins, so look at the next input token WITHOUT
+% consuming it.  \futurelet is the only thing that touches it here; if it
+% does not continue a longer spelling the complete one fires and the token
+% is left in the stream to be processed normally.
+\def\pdftexja@utf@peek{%
+  \futurelet\pdftexja@utf@peektok\pdftexja@utf@peek@check}
+\def\pdftexja@utf@peek@check{%
+  \pdftexja@utf@extendfalse
+  \let\pdftexja@utf@op\pdftexja@utf@extend@one
+  \pdftexja@utf@list
+  \ifpdftexja@utf@extend
+    \let\pdftexja@utf@next\pdftexja@utf@readnext
+  \else
+    \let\pdftexja@utf@next\pdftexja@utf@target
+  \fi
+  \pdftexja@utf@next}
+% read-only pass over the candidates: does one of them continue with the
+% peeked token?  The peeked token and the stored head byte are both
+% single-character tokens read under the same catcode table, so \ifx is
+% the catcode-preserving comparison here (nothing is expanded).
+\def\pdftexja@utf@extend@one#1#2{%
+  \def\pdftexja@utf@rest{#1}%
+  \ifx\pdftexja@utf@rest\@empty
+  \else
+    \pdftexja@utf@extend@head#1\pdftexja@utf@stop
+  \fi}
+\def\pdftexja@utf@extend@head#1#2\pdftexja@utf@stop{%
+  \def\pdftexja@utf@headtok{#1}%
+  \expandafter\let\expandafter\pdftexja@utf@headtok\pdftexja@utf@headtok
+  \ifx\pdftexja@utf@peektok\pdftexja@utf@headtok
+    \pdftexja@utf@extendtrue
+  \fi}
 % read the next input byte (unexpanded: the active character token stays
 % a character token) and remember its code
 \def\pdftexja@utf@readnext#1{%
-  \edef\pdftexja@utf@num{\number`#1}%
-  \pdftexja@utf@filter}
+  \pdftexja@utf@charcode{#1}%
+  \ifpdftexja@utf@char
+    \let\pdftexja@utf@next\pdftexja@utf@filter
+  \else
+    \let\pdftexja@utf@next\pdftexja@utf@unknown
+  \fi
+  \pdftexja@utf@next}
+% \pdftexja@utf@num <- code of the byte, unless the token is not a
+% character at all (a control sequence cannot be part of a byte run).
+% The conditional must be closed here: nothing below this macro may read
+% from the document stream while a conditional of ours is still open, or
+% the next input grab would swallow the pending \fi.
+\def\pdftexja@utf@charcode#1{%
+  \ifcat\noexpand#1\relax
+    \pdftexja@utf@charfalse
+  \else
+    \pdftexja@utf@chartrue
+    \edef\pdftexja@utf@num{\number`#1}%
+  \fi}
 % keep the candidates whose next byte matches the input byte, stripped of
 % that byte; the rest are dropped
 \def\pdftexja@utf@filter{%
@@ -250,10 +299,13 @@
   \let\pdftexja@utf@op\pdftexja@utf@filter@one
   \pdftexja@utf@list
   \pdftexja@utf@filter@done}
+% A candidate whose spelling is already exhausted is DROPPED here: the
+% filter runs only after the input was seen to continue (either no candidate
+% was complete, or the lookahead matched a longer one), so the shorter
+% spelling can no longer be the answer.
 \def\pdftexja@utf@filter@one#1#2{%
   \def\pdftexja@utf@rest{#1}%
   \ifx\pdftexja@utf@rest\@empty
-    \pdftexja@utf@addraw{}{#2}%
   \else
     \pdftexja@utf@strip#1\pdftexja@utf@stop{#2}%
   \fi}
