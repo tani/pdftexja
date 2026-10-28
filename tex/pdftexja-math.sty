@@ -127,8 +127,10 @@
 %   でアクティブ文字展開の破綻が原理的に起こらない。
 %   \(...\) は専用 wrapper（\) は protected で delimiter scan 中に展開
 %   されないため素通りの frozen 経路では捕捉できない）。
-%   math 環境はカーネル定義 \math=\( / \endmath=\) なので \( の差し替えで
-%   自動的に同経路に載る。\ensuremath の $\relax#1$ も outer entry 経由。
+%   math 環境は `\end{math}' で閉じるため、\( の `\)' 区切りでは捕捉
+%   できない（delimiter は同一トークンでのみ一致する）。tate では
+%   \pdftexja@imath@endenv（`\end' 区切り + \end の再出力）に載せ替える。
+%   \ensuremath の $\relax#1$ も outer entry 経由。
 %
 % 【yoko 文書】 δ=0 かつ uplatex は無補正のため、entry は保存済みの
 %   元 frozen トークンを実行して素通りする（キャプチャなし・ノード構造
@@ -391,7 +393,19 @@
 % 本体を直接捕捉する専用 wrapper に差し替える。math 環境
 % （\math=\(, \endmath=\)）もこの経路に自動的に載る。
 % 本体中の raw box 検出は wrapper に限定した簡易走査（歩行と同一契約）。
-\protected\def\pdftexja@imath@paren#1\){%
+\protected\def\pdftexja@imath@paren#1\){\pdftexja@imath@body{#1}}
+% \begin{math}...\end{math}: the token that closes the environment is
+% `\end' followed by the group {math} -- NOT the token `\)', and TeX matches
+% a cs delimiter only by the IDENTICAL token, so the `\)'-delimited capture
+% can never match it (measured: it runs to EOF with `File ended while
+% scanning use of \pdftexja@math@scan').  Capture at the literal `\end' and
+% re-emit that token: the untouched {math} group is then read normally and
+% the kernel's \end{math} bookkeeping (\endgroup, end hooks) still runs.
+% The shared body has already typeset the formula, so \endmath is
+% neutralised in the tate setup below; direct `\math...\endmath' (whose end
+% is the single token \endmath) is outside this capture and unsupported.
+\protected\def\pdftexja@imath@endenv#1\end{\pdftexja@imath@body{#1}\end}
+\def\pdftexja@imath@body#1{%
   \ifnum\pdftexja@dir=1
     % δ は selectfont フックで計算済み（plcore の size@update 契約と同一）
     \global\pdftexja@math@grab=\@ne
@@ -509,13 +523,22 @@
   \AtBeginDocument{%
     \global\pdftexja@math@frozen@saved\expandafter{\the\frozen@everymath}%
     \global\frozen@everymath{\pdftexja@math@entry}%
-    % \endmath must BE \) so that the `\)'-delimited capture terminates for
-    % \begin{math}...\end{math}: TeX matches a delimited parameter by
-    % meaning (\ifx), so \let\endmath\) is enough and keeps \end{math}
-    % working outside a capture (where \) keeps its kernel meaning).
-    \AtBeginDocument{\ifdefined\endmath\let\endmath\)\fi}%
     % \( 差し替え（\math/\endmath = \( /\) も同経路化）
     \protected\def\({\relax\ifmmode\@badmath\else\expandafter\pdftexja@imath@paren\fi}%
+    % \begin{math} closes with the literal token list `\end{math}', so it
+    % needs the `\end'-delimited capture (see \pdftexja@imath@endenv).
+    % `\let\endmath\)' does NOT help here: TeX matches a control-sequence
+    % delimiter by the identical token, never by meaning, so \endmath can
+    % never satisfy a `\)' delimiter even after \let (measured: both spellings
+    % compare equal under \ifx yet the scan still runs to EOF).
+    % The shared body typesets the formula itself, so \endmath must not try
+    % to close a second time; neutralising it is tate-only because the yoko
+    % passthrough reproduces the kernel \(...\) pair inline.
+    \ifnum\pdftexja@dir=1
+      \protected\def\math{\relax\ifmmode\@badmath\else
+        \expandafter\pdftexja@imath@endenv\fi}%
+      \let\endmath\relax
+    \fi
   }
 \fi
 

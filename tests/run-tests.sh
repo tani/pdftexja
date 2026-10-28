@@ -350,6 +350,60 @@ else
   cat "$TINY/gen.log" >&2
 fi
 
+# --- R5: custom preset numeric scan at \begin{document} -----------------
+# The tiny descriptor above has no class 0: its normal ROLE is class 17.
+# The math delta must resolve the ACTIVE direction's roles.normal, not a
+# hard-coded class 0 (40a3014).  With a hard-coded class 0 \pdftexja@cls@d
+# stays undefined and the selectfont hook reads the `=' of
+# `Missing number <to be read again> =' while scanning at \begin{document}.
+# The tiny-jfm gate above already exercises the same descriptor through
+# \begin{document}; this gate makes the contract explicit: the resolved
+# {w}{h}{d}{align}{left} record must BE class 17's descriptor data, the
+# scan must complete (marker) and must not raise `Missing number`, and the
+# two independent widths must still hold.
+check
+if [ ! -f "$WORK/run/pdftexja-jfm-tiny.def" ]; then
+  fail "tiny-preset-scan: tiny descriptor missing (tiny-jfm generation failed)"
+else
+  cat >"$WORK/run/tiny-preset-scan.tex" <<'EOF'
+\documentclass{article}
+\usepackage[jfm=pdftexja-jfm-tiny.def]{pdftexja}
+\makeatletter
+\AtBeginDocument{%
+  \typeout{TINYSCAN:begin}%
+  \typeout{TINYSCAN:normcls=\pdftexja@normcls}%
+}
+\begin{document}
+\pdftexjasetup{ja-scale=1}
+\setbox0\hbox{$x$}\typeout{TINYSCAN:mathx=\the\wd0}
+\setbox0\hbox{ああ}\typeout{TINYSCAN:jaa=\the\wd0}
+\setbox0\hbox{あ。}\typeout{TINYSCAN:jaaK=\the\wd0}
+\end{document}
+EOF
+  if compile tiny-preset-scan 1; then
+    norm=$(sed -n 's/^TINYSCAN:normcls=\(.*\)$/\1/p' "$WORK/run/tiny-preset-scan.log" | head -1)
+    mx=$(sed -n 's/^TINYSCAN:mathx=\(.*\)$/\1/p' "$WORK/run/tiny-preset-scan.log" | head -1)
+    a=$(sed -n 's/^TINYSCAN:jaa=\([0-9.]*\)pt$/\1/p' "$WORK/run/tiny-preset-scan.log" | head -1)
+    b=$(sed -n 's/^TINYSCAN:jaaK=\([0-9.]*\)pt$/\1/p' "$WORK/run/tiny-preset-scan.log" | head -1)
+    if ! grep -q '^TINYSCAN:begin$' "$WORK/run/tiny-preset-scan.log"; then
+      fail "tiny-preset-scan: begin-document hook did not complete"
+    elif grep -q 'Missing number' "$WORK/run/tiny-preset-scan.log"; then
+      fail "tiny-preset-scan: numeric scan error at begin-document"
+    elif [ "$norm" != "{1.000000}{0.880000}{0.120000}{left}{0.000000}" ]; then
+      fail "tiny-preset-scan: delta role record '$norm' is not the class-17 data"
+    elif [ -z "$mx" ]; then
+      fail "tiny-preset-scan: math probe did not run"
+    elif [ "$a" = "20.0" ] && [ "$b" = "16.25" ]; then
+      pass "tiny-preset-scan: roles.normal delta at begin-document; widths 20.0pt / 16.25pt"
+    else
+      fail "tiny-preset-scan: got '$a' / '$b' (want 20.0 / 16.25)"
+    fi
+  else
+    fail "tiny-preset-scan: compile"
+    tail -20 "$WORK/run/tiny-preset-scan.log" >&2
+  fi
+fi
+
 # --- per-scalar spacing API (plan §5.3) --------------------------------
 check
 cat >"$WORK/run/charspacing.tex" <<'EOF'
@@ -464,6 +518,82 @@ else
   tail -6 "$WORK/run/csp-group.log" >&2
 fi
 
+# --- R7: UTF-8 dispatcher (U+3000, 和暦, 西暦 spellings) -----------------
+# The spellings are registered by the class helper (pdftexja-class.def) and
+# dispatched by the foundation (pdftexja-latex.sty, b86adea).  Before the fix
+# every one of them raised `unknown command spelling' (registration was on
+# the wrong hash entity and the candidate list was read structurally).
+# Each registered target is wrapped so a dispatch leaves a log marker: the
+# marker is emitted by the intended code path itself, so its presence proves
+# the byte run was consumed and the target ran.  Raw characters are CJK
+# literals and MUST NOT dispatch: the state probes (west/era) and the marker
+# counts separate the two paths, and the typeset output is asserted too.
+check
+cat >"$WORK/run/r7-utf.tex" <<'EOF'
+\documentclass{pdfjarticle}
+\makeatletter
+\let\pdftexja@rng@uorig\pdftexja@zenkakaspace@
+\protected\def\pdftexja@zenkakaspace@{\pdftexja@rng@uorig\typeout{R7:u3000=dispatch}}
+\let\pdftexja@rng@sorig\pdfjclass@seireki
+\def\pdfjclass@seireki{\pdftexja@rng@sorig\typeout{R7:seireki=dispatch}}
+\let\pdftexja@rng@worig\pdfjclass@wareki
+\def\pdfjclass@wareki{\pdftexja@rng@worig\typeout{R7:wareki=dispatch}}
+\begin{document}
+\西暦\today\typeout{R7:state-after-seireki=\ifpdfjclass@seireki west\else era\fi}
+和暦\typeout{R7:state-after-raw-wareki=\ifpdfjclass@seireki west\else era\fi}
+\和暦\today\typeout{R7:state-after-wareki=\ifpdfjclass@seireki west\else era\fi}
+西暦\typeout{R7:state-after-raw-seireki=\ifpdfjclass@seireki west\else era\fi}
+\par
+\setbox0\hbox{AB}\typeout{R7:wAB=\the\wd0}
+\setbox2\hbox{A\　B}\typeout{R7:wdisp=\the\wd2}
+\setbox4\hbox{A　B}\typeout{R7:wraw=\the\wd4}
+\setbox6\hbox{\　}\typeout{R7:wsp=\the\wd6}
+\dimen0=\wd2 \advance\dimen0 by -\wd0 \typeout{R7:delta=\the\dimen0}
+\end{document}
+EOF
+if compile r7-utf 1; then
+  nd=$(grep -c '^R7:u3000=dispatch$' "$WORK/run/r7-utf.log")
+  ns=$(grep -c '^R7:seireki=dispatch$' "$WORK/run/r7-utf.log")
+  nw=$(grep -c '^R7:wareki=dispatch$' "$WORK/run/r7-utf.log")
+  s1=$(sed -n 's/^R7:state-after-seireki=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  s2=$(sed -n 's/^R7:state-after-raw-wareki=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  s3=$(sed -n 's/^R7:state-after-wareki=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  s4=$(sed -n 's/^R7:state-after-raw-seireki=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  wab=$(sed -n 's/^R7:wAB=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  wdisp=$(sed -n 's/^R7:wdisp=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  wraw=$(sed -n 's/^R7:wraw=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  wsp=$(sed -n 's/^R7:wsp=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  delta=$(sed -n 's/^R7:delta=\(.*\)$/\1/p' "$WORK/run/r7-utf.log" | head -1)
+  ok=1
+  [ "$nd" = "2" ] && [ "$ns" = "1" ] && [ "$nw" = "1" ] || ok=0
+  [ "$s1" = "west" ] && [ "$s2" = "west" ] || ok=0
+  [ "$s3" = "era" ] && [ "$s4" = "era" ] || ok=0
+  [ "$delta" = "$wsp" ] || ok=0
+  [ "$wdisp" != "$wab" ] || ok=0
+  awk -v d="${wsp%pt}" -v r="${wraw%pt}" -v b="${wab%pt}" \
+    'BEGIN { exit !(d > 0 && r > b) }' || ok=0
+  if [ "$ok" = 1 ]; then
+    pass "r7-utf: U+3000 = one zw, 和暦/西暦 dispatch (raw literals do not)"
+  else
+    fail "r7-utf: counts=$nd/$ns/$nw states=$s1/$s2/$s3/$s4 delta='$delta' wsp='$wsp' wdisp='$wdisp' wAB='$wab' wraw='$wraw'"
+  fi
+  pdftext_has r7-utf '和暦'
+  pdftext_has r7-utf '西暦'
+  if grep -Eq '(令和|平成|昭和)([0-9]+|元)年' "$WORK/run/r7-utf.txt"; then
+    pass "r7-utf: wareki today typeset the era year"
+  else
+    fail "r7-utf: wareki today produced no era year"
+  fi
+  if grep -Eq '[0-9]{4}年' "$WORK/run/r7-utf.txt"; then
+    pass "r7-utf: seireki today typeset the Gregorian year"
+  else
+    fail "r7-utf: seireki today produced no Gregorian year"
+  fi
+else
+  fail "r7-utf: compile"
+  tail -20 "$WORK/run/r7-utf.log" >&2
+fi
+
 # --- error paths: unknown setup key and unsupported engine gate ---------
 check
 cat >"$WORK/run/err-unknown-key.tex" <<'EOF'
@@ -511,6 +641,53 @@ if compile page-direction 1; then
   fi
 else
   fail "page-direction: compile"
+fi
+
+# --- R8: tate \begin{math}...\end{math} ---------------------------------
+# The predicate used to fail with 'File ended while scanning use of
+# \pdftexja@math@scan': \begin{math} closes with the literal token list
+# `\end{math}', which neither the `\)'-delimited nor a `\let\endmath\)'
+# capture can match (TeX matches a cs delimiter by the IDENTICAL token, not
+# by its meaning).  The gate therefore pins the real contract: the compile
+# completes and the math box has the same width as the `$...$' oracle in the
+# same tate document (measured 23.199pt here; the defect was a capture
+# failure, not a width change).  The display form must render too: exactly
+# two `x + y' runs are extracted (inline + display).
+# NOTE: `direction' is a pdftexja option here.  Passing it as
+# \documentclass[direction=tate]{article} does NOT reach the package
+# (measured: \pdftexja@dir stays 0, i.e. the document is yoko), so that
+# spelling would make this gate vacuous.
+check
+cat >"$WORK/run/tate-beginmath.tex" <<'EOF'
+\documentclass{article}
+\usepackage[direction=tate]{pdftexja}
+\begin{document}
+あ\begin{math}x+y\end{math}い
+\[x+y\]
+\setbox0\hbox{\begin{math}x+y\end{math}}\typeout{BEGINMATH:begin=\the\wd0}
+\setbox2\hbox{$x+y$}\typeout{BEGINMATH:dollar=\the\wd2}
+\end{document}
+EOF
+if compile tate-beginmath 1; then
+  a=$(sed -n 's/^BEGINMATH:begin=\(.*\)$/\1/p' "$WORK/run/tate-beginmath.log" | head -1)
+  b=$(sed -n 's/^BEGINMATH:dollar=\(.*\)$/\1/p' "$WORK/run/tate-beginmath.log" | head -1)
+  if [ -n "$a" ] && [ "$a" = "$b" ] && \
+     awk -v v="${a%pt}" 'BEGIN { exit !(v > 0) }'; then
+    pass "tate-beginmath: begin/end math width $a == \$x+y\$"
+  else
+    fail "tate-beginmath: begin='$a' dollar='$b' (want equal and non-zero)"
+  fi
+  ( cd "$WORK/run" && python3 "$REPO/tests/pdf-text.py" tate-beginmath.pdf 2>/dev/null ) \
+    >"$WORK/run/tate-beginmath.txt"
+  n=$(grep -oF -- 'x + y' "$WORK/run/tate-beginmath.txt" | wc -l | tr -d ' ')
+  if [ "${n:-0}" -ge 2 ]; then
+    pass "tate-beginmath: inline and display math both typeset (${n} runs)"
+  else
+    fail "tate-beginmath: expected inline+display math, got ${n:-0} 'x + y' run(s)"
+  fi
+else
+  fail "tate-beginmath: compile"
+  tail -20 "$WORK/run/tate-beginmath.log" >&2
 fi
 
 echo

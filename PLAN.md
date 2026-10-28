@@ -26,11 +26,11 @@
 | # | 症状 | 実測 | 原因の所在（帰属） |
 |---|---|---|---|
 | R4 | 縦組ページのテキスト抽出が空 | **解決済み・計測器の欠陥だった**: `standalone-tate.pdf` から pdftotext は 0 文字、PyMuPDF は 115+13 文字（見出し・本文・括弧・TCY 数字・数式すべて）を返す。原因は pdftotext の回転レイアウト除去で、描画/ToUnicode は正常 | `tests/run-tests.sh` の抽出を `tests/pdf-text.py`（PyMuPDF）へ交換（閾値変更ではなく計測器の交換）。以後 3 件とも PASS |
-| R5 | 独自 preset で `\begin{document}` の数値走査エラー | tiny preset（role 17/34/83/201/202）で `Missing number <to be read again> =` | `tex/pdftexja-rules.sty` の class 表構築（`\pdftexja@jfm@tables` / `\pdftexja@loadclass`）と `direction` のページ初期化。role が default skip を持たないことが引き金（generator 側で全 class に既定を出すのが本筋）。**status: closed（commit `40a3014`）・gate あり**: `tests/run-tests.sh` の `tiny-jfm` gate（`:279`–`:350`）が R5 と同じ role 表（normal=17 / latin=83 / paragraph=201 / box=202）の descriptor を `\usepackage[jfm=pdftexja-jfm-tiny.def]` で読み、`\begin{document}` の selectfont hook を通す。走査エラーなら `FAIL: tiny-jfm: compile`、通れば `\hbox{ああ}`=20.0pt / `\hbox{あ。}`=16.25pt を assert する（gate を読んで確認） |
+| R5 | 独自 preset で `\begin{document}` の数値走査エラー | tiny preset（role 17/34/83/201/202）で `Missing number <to be read again> =` | `tex/pdftexja-rules.sty` の class 表構築（`\pdftexja@jfm@tables` / `\pdftexja@loadclass`）と `direction` のページ初期化。role が default skip を持たないことが引き金（generator 側で全 class に既定を出すのが本筋）。**status: closed（commit `40a3014`）・gate 2 本**: `tests/run-tests.sh:279`–`350` の `tiny-jfm` が R5 と同じ role 表（normal=17 / latin=83 / paragraph=201 / box=202）の descriptor を `\usepackage[jfm=pdftexja-jfm-tiny.def]` で読み、`\begin{document}` の selectfont hook を通し、`\hbox{ああ}`=20.0pt / `\hbox{あ。}`=16.25pt を assert する（**走査自体はこれで既に被覆されていた**）。追加の `tiny-preset-scan` gate は契約を明示するもの: `\AtBeginDocument` の marker、`Missing number` 不在、`\pdftexja@normcls` が descriptor の class-17 データ（`{1.000000}{0.880000}{0.120000}{left}{0.000000}`）であること、同 2 幅。pre-fix（`40a3014` の逆適用）では両 gate とも `FAIL: ... compile`（`Missing number`） |
 | R6b | 効果配線の設計制約（R6 の下位） | `\pdftexja@latadj` は `lastclass=90`（段落頭）の時だけ `lastclass=27` を立てるため、段落途中の Latin→CJK 境界では class 27 が現れず `\pdftexja@emitpair@xspc` も公開上書きも**参照されない**。`A漢` が全モードで 17.50002pt なのはこのため | 次段の設計: 段落途中の Latin 連続を検出する（`\lastnodetype=0` かつ `glyphmark≠1`）には LaTeX 側の文字出力を観測する必要があり、既存の段落頭限定判定の拡張は**全クラスの間隔数値を動かす**。合意形成のうえで実施する（現状の挙動を勝手に変えない） |
 | R6 | `\pdftexjaSetCharSpacing` の**効果**が出ない（API 自体は実装済み） | 実装: 公開上書き層（`\pdftexja@charxsp@<decimal>` → descriptor `xsp@<class>` → 既定 both）、HEX/mode 検証、preamble-only、group-local を追加し、contract test 4 件は PASS（不正 HEX / 不正 mode / 本文中呼出を拒否）。**しかし実測では `A漢`・`漢A` の幅が default/none/both/pre/post すべて 17.50002pt で不変**（standard/ujis 両 preset） | 原因: `\pdftexja@ifxsp` は `\pdftexja@emitpair@xspc`（class 27 が境界に居る時だけ）からしか呼ばれず、実際の Latin↔CJK 境界はレンダラの `\pdftexja@pre`/`\pdftexja@latadj` 側で処理される。**効果の配線が未了**。**status: 効果は R17 と同根（`\pdftexja@emitpair@xspc` の極性反転、commit `6254223` で解消）** — 2026-10-28 実測: `A漢` は `none` 17.50002pt → `both` 20.00002pt。ただし**幅を assert するゲートは無い**: `run-tests.sh` の `SetCharSpacing` 検査は contract のみ（compile、不正 HEX/mode 拒否、preamble-only、group-local）で、幅比較は `:434`–`:436` のコメントどおり R6b 配線待ちのため意図的に置いていない |
-| R7 | UTF-8 dispatcher が全滅 | `\　`(U+3000) で `unknown command spelling`。`和暦/西暦` は登録成功するが dispatch 不可。**調査で判明した4つの独立欠陥**（下記） | `tex/pdftexja-latex.sty` の登録と照合。①②③④を全て直さないと dispatch は成立しない。**status: 修正済み（commit `b86adea`）・専用 gate なし** — pdftexja の `tests/` に U+3000・`和暦/西暦` を通すゲートは無い（`run-tests.sh` と fixtures に出現 0）。通常ロード時の登録実行以外は dispatch を踏まないため、回帰は間接的にも検出できない。sibling slice が gate を追加する |
-| R8 | 縦組で `\begin{math}…\end{math}` が失敗 | `File ended while scanning use of \pdftexja@math@scan`（yoko では通る） | `tex/pdftexja-math.sty` の `\pdftexja@imath@paren#1\)` が `\)` トークン区切り。`\begin{math}` は `\endmath` で閉じるため一致しない。**status: 修正済み（commit `725acf4`）・専用 gate なし** — fixtures は `$…$` のみ（`tests/fixtures/foundation/standalone-yoko.tex:7` / `standalone-tate.tex:8`）で `\begin{math}` はどのゲートにも現れない。sibling slice が gate を追加する |
+| R7 | UTF-8 dispatcher が全滅 | `\　`(U+3000) で `unknown command spelling`。`和暦/西暦` は登録成功するが dispatch 不可。**調査で判明した4つの独立欠陥**（下記） | `tex/pdftexja-latex.sty` の登録と照合。①②③④を全て直さないと dispatch は成立しない。**status: 修正済み（commit `b86adea`）・gate あり（`r7-utf`）** — `tests/run-tests.sh` が `pdfjarticle`（class helper が実際に `西暦/西暦true/西暦false/和暦` を登録する）で、登録 target を marker wrapper に包み、`\　`=1 zw（`A\　B`−`AB` が `\hbox{\　}` と一致、>0）、`\和暦`/`\西暦` の marker 各 1 回、state が west→west（raw 和暦 は dispatch しない）→era→era（raw 西暦 も dispatch しない）を assert。生の `和暦`/`西暦` は抽出テキストに現れ、`\西暦\today` は西暦年、`\和暦\today` は元号年を抽出テキストに残す（「エラーが無い」ではなく出力で判定）。pre-fix `latex.sty`（`b86adea^`）では `FAIL: r7-utf: compile`（`ambiguous UTF command spelling`） |
+| R8 | 縦組で `\begin{math}…\end{math}` が失敗 | `File ended while scanning use of \pdftexja@math@scan`（yoko では通る）。**2026-10-28 再測: `725acf4` の `\let\endmath\)` では直っていなかった** — `direction` を pdftexja の option として与えた真の tate 文書（`\usepackage[direction=tate]{pdftexja}`）で `\begin{math}x+y\end{math}` は HEAD でも同じ scan-to-EOF で落ちる。`\documentclass[direction=tate]{article}` は package に届かず `\pdftexja@dir=0`（yoko）になるため、この綴りでは症状が出ない（gate が空振りする罠） | 真因は delimiter 照合の規則: TeX は制御綴区切りを**同一トークン**でのみ一致させ、`\ifx` の意味比較はしない（最小再現: `\let\zz\rp` でも `\def\a#1\rp{...}` は `\zz` に一致しない）。`\begin{math}` の終端は入力ストリーム上ではトークン列 `\end`+`{math}` であり、`\)` でも `\endmath` でもない。**status: 修正済み（本 commit）・gate あり（`tate-beginmath`）** — `\pdftexja@imath@endenv#1\end` が `\end` で捕捉し、本体（`\pdftexja@imath@body` に共通化）を組んだ後 `\end` を再出力して `\end{math}` の `\endgroup`/hook を通常どおり走らせる。tate の `\math` をこの wrapper に差し替え、二重閉じを避けるため `\endmath` を no-op にする（yoko の `\(...\)` 素通り経路は不変）。検証: inline/`\hbox` 内/`\[...\]`/`\(...\)` すべて 0 error、`\begin{math}x+y\end{math}` の幅 = `$x+y$` の 23.199pt、表示形も抽出テキストに 2 本の `x + y`。pre-fix（`HEAD` の `pdftexja-math.sty`）では `FAIL: tate-beginmath: compile`（同じ `File ended while scanning use of \pdftexja@math@scan`） |
 | R11 | ~~TDS/staged/uninstall の証跡が無い~~ → **閉（2026-10-28）**: `make tds` を acceptance の step 6 で実行し、生成物をゲート化した。repo 外 cwd の staged proof（step 4）と uninstall sentinel（step 1 の `check-uninstall`）も同じ acceptance で実行済み | ゲート: `tests/acceptance.sh` の「6. TDS bundle」が `make tds TDS=$STAGE/tds` の後、12 class（`.cls`）、`pdftexja.sty` + 9 modules + 2 class helper、JFM 25 `.def`（5 preset + standard の 6 variant × 2 方向 + 他 4 preset の base × 2 方向）と 5 manifest、font profile 3 本を個別に `test -e` し、欠落は `FAIL: tds: missing <path>` で fail（SKIP にしない）。TDS 内の `SENTINEL`（`check-uninstall` が置く内容 `keep` を含む）も不在 assert | `TDS` を Makefile の上書き可能変数（`TDS ?= tds`）にし、acceptance は checkout を汚さず scratch に bundle を作る。`clean` は空/`/`/`.` を拒否 |
 | R12 | ~~`tests/run-pdftex-tests.sh` が未移植~~ → **完了（検証）**: 163 gates・`FAILED: 0` で稼働 |
 
@@ -170,11 +170,16 @@ group-local、繰り返し置換、方向・family 共通、分類/penalty/encod
    （jlreq 側は `西暦` を登録しない運用にする）。
 
 ### WP8 — 縦組 `\begin{math}`（R8）
-1. `\pdftexja@imath@paren#1\)` は `\)` トークン区切り。`\begin{math}` は `\endmath` で
-   閉じるため一致しない。
-2. 修正: `\endmath` 区切りの sibling（`\pdftexja@imath@endmath#1\endmath`）を追加し、
-   `\begin{math}` を `\let\endmath\)` ではなく**専用 wrapper** に差し替える。
-3. 検証: tate で `\begin{math}x+y\end{math}` が通り、`$\hbox{x}$` の raw-box 拒否が不変。
+1. `\pdftexja@imath@paren#1\)` は `\)` トークン区切り。`\begin{math}` の終端は
+   入力ストリーム上 `\end`+`{math}` であり、`\)` とも `\endmath` とも一致しない
+   （TeX の delimiter 照合は同一トークンのみ。`\let\endmath\)` は無効 —
+   2026-10-28 に HEAD で再現・実測）。
+2. 修正: `\pdftexja@imath@endenv#1\end`（本体は `\pdftexja@imath@body` に共通化）で
+   `\end` を捕捉し、本体組版後に `\end` を再出力して `\end{math}` の bookkeeping を
+   通常実行させる。tate の `\math` をこの wrapper に差し替え、`\endmath` は no-op に。
+3. 検証: tate で `\begin{math}x+y\end{math}`（inline/`\hbox` 内）と `\[x+y\]`・`\(x+y\)`
+   が 0 error、幅 = `$x+y$` の 23.199pt、表示形も抽出テキストに `x + y` 2 本。
+   raw-box 拒否は不変。`tests/run-tests.sh` の `tate-beginmath` が gate。
 
 ### WP9 — jlreq の残存 private state（R9, R10）
 1. `jlreq.cls` の `\jlreqpdf@…` 107 箇所を PLAN（split plan §3 の表）に従って 20 ブロック単位で除去:
@@ -274,10 +279,10 @@ WP10 (検証統合) ── 依存: WP1–WP9
 | WP2 ltxdoc | **完了** | `\Cjascale` を bxcjkjatype ロード前に ja-scale で設定。`\hbox{あ}` 9.6222pt = `\zw` |
 | WP3 jtbook | **完了（範囲明示）** | 縦組の位置比較は座標系が異なるため絶対座標では不可 → テキスト・被覆・版面値で gate。位置は **R14（列ピッチ）で 2026-10-28 に gate 化**（0.05pt）し、R3 も測定 artefact と判明して閉鎖 |
 | WP6 SetCharSpacing | **API 完了・効果配線は R6b** | 4 契約テスト PASS。段落途中 Latin→CJK では class 27 が立たず未参照（設計判断待ち） |
-| WP7 UTF dispatcher | 進行中（別担当） | 4 欠陥を特定済み。R7 参照 |
-| WP8 `\begin{math}` 縦組 | 未着手 | `\)` 区切りと `\endmath` の不一致 |
+| WP7 UTF dispatcher | **完了** | `b86adea` の dispatch を `r7-utf` gate が被覆（U+3000=1zw、`\和暦`/`\西暦` marker+state、raw 文字は非 dispatch、抽出テキストで西暦年/元号年） |
+| WP8 `\begin{math}` 縦組 | **完了（2026-10-28 実効修正）** | `725acf4` は無効だった（`\let\endmath\)` は delimiter 照合を変えない）。`\pdftexja@imath@endenv` で `\end` 捕捉 + 再出力。`tate-beginmath` gate、幅 23.199pt |
 | WP9 jlreq cutover | **完了** | `grep -c jlreqpdf@` = 0（cls/complements/trimmarks/def）、旧 4 .sty 削除、yoko/tate 0 error・2 頁、p/u sanity OK |
 | WP10 検証統合 | 一部完了 | class parity 12/12（TDS でも 12/12）、staged provenance（/tmp/pkg と TDS）PASS、uninstall sentinel PASS。jlreq runner は別担当で更新中 |
 | 全体 | run-tests.sh **0 fail** / run-class-tests.sh **12/12** / check-jfm・check-fonts green | 各コミットメッセージに実出力を記載 |
 
-残: R7（dispatcher）、R8（縦組 `\begin{math}`）、R6b（効果配線の設計）、R12（jlreq runner）。
+残: R6b（効果配線の設計）、R12（jlreq runner）。R7/R8 は専用 gate（`r7-utf` / `tate-beginmath`）付きで閉鎖（2026-10-28）。
