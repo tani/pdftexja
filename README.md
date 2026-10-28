@@ -29,6 +29,22 @@ primitives, plus 12 document classes built on it.
 | LaTeX | LaTeX2e, `expl3`, `graphicx` |
 | Japanese input | `cjk` + `bxcjkjatype` (loaded automatically per `fontset`) |
 | Fonts | from TeX Live: IPAex (default, Type1 planes), IPA, or HaranoAji |
+
+**Debian/Ubuntu TeX Live.** `texlive-lang-japanese` alone is not enough. The
+default `fontset=ipaex-type1` needs the `ipaex-type1` package, which Debian
+ships in **`texlive-fonts-extra`**. `fontset=ipa` and `fontset=haranoaji` need
+the zhmetrics TFMs (`unisong*`/`unili*`), which are in
+**`texlive-lang-chinese`**. `texlive-full` has both. Measured on Ubuntu 24.04
+(TeX Live 2023.20240207):
+
+| Installed | `ipaex-type1` | `ipa` / `haranoaji` |
+|---|---|---|
+| `texlive-lang-japanese` | fails (pdftexja reports the missing package) | fails: `Font C70/mc/m/n/10/65=unisong65 ... not loadable` |
+| + `texlive-lang-chinese` | fails | works (yoko and tate) |
+| + `texlive-fonts-extra` | works (yoko and tate) | works |
+
+With both installed, the foundation and class-parity suites pass against the
+distribution's real `ipaex-type1`.
 | Tools for building assets | `texlua`, `python3` (fontTools), `ttf2tfm` |
 
 ## Quick start
@@ -168,8 +184,9 @@ sh tests/acceptance.sh --pdftexja . --jlreq ../jlreq
 Every gate fails loudly with the measured numbers and the log path. Baselines
 are never re-recorded automatically.
 
-**TeX Live without `ipaex-type1`** (the Debian/Ubuntu `texlive-*` packages do
-not ship it): the default fontset cannot load, so the gates cannot run. Build a
+**TeX Live without `ipaex-type1`** (e.g. Debian/Ubuntu without
+`texlive-fonts-extra`, see Requirements): the default fontset cannot load, so
+the gates cannot run. Install the package if you can; otherwise build a
 metric-identical stand-in from the installed IPAex TTFs into the staged tree
 first (needs `ttf2tfm`, `tftopl`, `pltotf` and fontTools; `cm-super` provides
 the Type 1 TS1 fonts the text comparison needs):

@@ -59,6 +59,19 @@
   \setboldgothicfont{pdftexja-haranoaji-gothic-bold-ttf.ttf}%
   \setmarugothicfont{pdftexja-haranoaji-gothic-ttf.ttf}%
 \else
+  % Without the ipaex-type1 package the first Japanese character fails
+  % deep inside NFSS (`Undefined control sequence'); say what is missing.
+  % (ipa/haranoaji need zhmetrics' unisong/unili TFMs; \IfFileExists cannot
+  % see TFMs, and the font loader's own error names them.)
+  \ifnum\pdfstrcmp{\pdftexja@opt@fontset}{ipaex-type1}=0 \relax
+    \IfFileExists{c70ipxm.fd}{}{%
+      \PackageError{pdftexja}{fontset=ipaex-type1 needs the ipaex-type1
+        package\MessageBreak (c70ipxm.fd not found)}{%
+        TeX Live: tlmgr install ipaex-type1.\MessageBreak
+        Debian/Ubuntu: apt install texlive-fonts-extra\MessageBreak
+        (texlive-full includes it), or use fontset=ipa or\MessageBreak
+        fontset=haranoaji with texlive-lang-chinese.}}%
+  \fi
   \expandafter\RequirePackage\expandafter[\pdftexja@opt@fontset,noCJKpunct]{bxcjkjatype}%
 \fi\fi
 
