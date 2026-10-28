@@ -29,7 +29,7 @@
 | R5 | 独自 preset で `\begin{document}` の数値走査エラー | tiny preset（role 17/34/83/201/202）で `Missing number <to be read again> =` | `tex/pdftexja-rules.sty` の class 表構築（`\pdftexja@jfm@tables` / `\pdftexja@loadclass`）と `direction` のページ初期化。role が default skip を持たないことが引き金（generator 側で全 class に既定を出すのが本筋） |
 | R6b | 効果配線の設計制約（R6 の下位） | `\pdftexja@latadj` は `lastclass=90`（段落頭）の時だけ `lastclass=27` を立てるため、段落途中の Latin→CJK 境界では class 27 が現れず `\pdftexja@emitpair@xspc` も公開上書きも**参照されない**。`A漢` が全モードで 17.50002pt なのはこのため | 次段の設計: 段落途中の Latin 連続を検出する（`\lastnodetype=0` かつ `glyphmark≠1`）には LaTeX 側の文字出力を観測する必要があり、既存の段落頭限定判定の拡張は**全クラスの間隔数値を動かす**。合意形成のうえで実施する（現状の挙動を勝手に変えない） |
 | R6 | `\pdftexjaSetCharSpacing` の**効果**が出ない（API 自体は実装済み） | 実装: 公開上書き層（`\pdftexja@charxsp@<decimal>` → descriptor `xsp@<class>` → 既定 both）、HEX/mode 検証、preamble-only、group-local を追加し、contract test 4 件は PASS（不正 HEX / 不正 mode / 本文中呼出を拒否）。**しかし実測では `A漢`・`漢A` の幅が default/none/both/pre/post すべて 17.50002pt で不変**（standard/ujis 両 preset） | 原因: `\pdftexja@ifxsp` は `\pdftexja@emitpair@xspc`（class 27 が境界に居る時だけ）からしか呼ばれず、実際の Latin↔CJK 境界はレンダラの `\pdftexja@pre`/`\pdftexja@latadj` 側で処理される。**効果の配線が未了** |
-| R7 | UTF-8 dispatcher が全滅 | `\　`(U+3000) で `! Package pdftexja Error: unknown command spelling`。`和暦/西暦` は登録成功するが dispatch 不可 | `tex/pdftexja-latex.sty:179-230`: `@utf@listgrab` は候補を `{残り}{target}` の入れ子で積むが `@utf@choose@a/b` は平坦 2 トークンとして読み、`@utf@match` は候補枯渇時に捨てる |
+| R7 | UTF-8 dispatcher が全滅 | `\　`(U+3000) で `unknown command spelling`。`和暦/西暦` は登録成功するが dispatch 不可。**調査で判明した4つの独立欠陥**（下記） | `tex/pdftexja-latex.sty` の登録と照合。①②③④を全て直さないと dispatch は成立しない |
 | R8 | 縦組で `\begin{math}…\end{math}` が失敗 | `File ended while scanning use of \pdftexja@math@scan`（yoko では通る） | `tex/pdftexja-math.sty` の `\pdftexja@imath@paren#1\)` が `\)` トークン区切り。`\begin{math}` は `\endmath` で閉じるため一致しない |
 | R11 | TDS/staged/uninstall の証跡が無い | `make tds` 未実行、repo 外 cwd での staged proof 未実行、uninstall sentinel 未実行 | 未実施（plan §10 Verification 4） |
 | R12 | `tests/run-pdftex-tests.sh`（jlreq consumer suite）が未移植 | 旧 backend 前提のまま（font build・旧 preflight） | jlreq 側 runner の再設計（plan §10） |
@@ -49,6 +49,22 @@ jlreq:
 | R9 | 縦組 jlreq が private state 参照で停止 | `\jlreqpdf@…` **107 箇所 / 20 ブロック**（units 624–664, savepos 757–887, para reset 1202–1208, UTF8 1494–1651, size 1762–1774, C* 1825–1851, warichu 4604–4870, warichu keys, TCY/jidori/akigumi 6997–7209, reference 7317–7477, insertion 7607–7645, ai-mark 3998–4061, index 6694–6745, math internal 6637–6640） | 旧 backend のアルゴリズム本体が class に残存（plan split §3 の除去対象） |
 | R10 | 旧 backend が現役 | `jlreq-pdftex{,-rules,-ruby,-paragraph}.sty` が install/TDS 対象に残る | 未削除（re-export shim は作らない） |
 | R13 | crop transport が委譲していない | `jlreq-trimmarks.sty` / `jlreq-trimmarks-pdftex.def` が自前で stock/`\pdfpageattr`/回転を実装 | `\pdftexjaSetCropStock/SetCropDrawing/SetPageAttributes/ClockwiseBox` へ委譲すべき（plan §7.2） |
+
+### R7 の内訳（実測で特定済み・修正は次段）
+
+1. **ハッシュ実体の不一致**: 登録は `\csname <catcode-12 の byte>\endcsname` を定義するが、
+   CJK が入れた**アクティブ文字**（catcode 13）は別のハッシュ実体。実測: 登録後も
+   `\meaning^^e5` は `\CJK@@@…` のまま。→ インストールは `\lccode`/`\lowercase` 方式で
+   アクティブ文字そのものに `\def` する必要がある（実装案は検証済みで有効）。
+2. **キーの表現不一致**: 候補表のキーが「byte 文字列」と「10 進値」で食い違うと
+   ルックアップが空になる。→ 両側とも 10 進 byte 値に統一する（実装済み・有効）。
+3. **照合が `\ifx`**: 登録側の綴りは catcode 12、入力側はアクティブ文字なので
+   `\ifx` は同じ byte でも一致しない。→ char code の数値比較にする（実装済み・有効）。
+4. **候補会計**: `@utf@listgrab` が候補を `{残り}{target}` の入れ子で積むのに
+   `@utf@choose@a/b` は平坦 2 トークンとして読む。`@utf@match` は枯渇候補を捨てる。
+   → 「実行ベース」（`\pdftexja@utf@c{残り}{target}` を `\pdftexja@utf@c` を差し替えて
+   実行する）へ書き換える設計を用意した（実装中に 1–3 を直した状態でも
+   `\　` がまだ unknown になるため、候補会計の実装を詰める必要がある）。
 
 R1/R2 は「純 CJK の折返し差」＝ 評価器ではなく **行容量（`\zw` と段幅）** か
 **クラス固有ブロックの可視トークン集合**の差。face 差ではない（同一 face 追試で不変）。
