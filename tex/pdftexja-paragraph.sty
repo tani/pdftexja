@@ -1,0 +1,2045 @@
+%%
+%% This is file 'pdftexja-paragraph.sty'.
+%% Strict priority paragraph environment for the jlreq pdfTeX backend.
+%%
+%% Loaded by pdftexja.sty (never directly). User-facing environment:
+%%   \begin{pdftexjaparagraph} ... \end{pdftexjaparagraph}
+%% (no argument; one environment = one paragraph; normal paragraphs keep
+%% the native path).
+%%
+%% DESIGN (docs/pdftex-internals.md, pdftexjaparagraph section):
+%%  1. Snapshot every paragraph parameter at entry; the env never changes
+%%     them in the document (the measurement group re-installs the
+%%     snapshot values locally; the lualatex comparison flow receives the
+%%     same values).
+%%  2. Itemize the EXPLICIT input model ONCE:
+%%     * CJK glyphs: typeset once through the rules glyph layer into a
+%%       pool box (nest-guarded; class/JFM metrics as usual); every
+%%       boundary between items is evaluated by the SHARED rules
+%%       evaluator (\pdftexja@evalpair) and the candidate series is
+%%       emitted by the rules emitter (\pdftexja@emitboundary) -- the
+%%       native breaker sees exactly the usual kern/penalty/glue stream.
+%%     * Latin words: one box per word (kerning/ligatures inside; no
+%%       in-word breaks except explicit soft-hyphen/discretionary).
+%%     * Spaces, \hspace: explicit glue items (tier 50).
+%%     * \mbox/\makebox: opaque items (factory direction metadata).
+%%     * $...$ / \(...\): inline math, one box (backend math capture).
+%%     * \tatechuyoko: one box via the direction box factory.
+%%     * \label/\ref/\hyperlink: whatsits are captured INSIDE item boxes
+%%       (labels pend into the next/final item) so the line streams
+%%       contain no bare whatsits.
+%%     * ruby: adapter contract (\pdftexjapar@rubyiface); polite error when
+%%       no adapter is present.
+%%     * Unknown macros, display math, floats, inserts/footnotes,
+%%       verbatim, non-local layout assignments: SPECIFIC errors at
+%%       itemization time. No silent approximate fallback.
+%%  3. Break ONCE with the native breaker: the items form one shadow
+%%     paragraph inside \vbox{\hsize=<snap> ...\par}. Net-zero markers
+%%     \vadjust{\kern<id>sp\kern-<id>sp} follow each item; the DISCARDED
+%%     measurement vbox is reverse-walked (lastnodetype-verified
+%%     lastbox/unskip/unpenalty/unkern) to recover per-line item ranges,
+%%     interline glue and penalties. User penalties are not clamped.
+%%  4. End-adjust recovery per line: natural repack width minus the known
+%%     naturals = the selected e; the tail kern/penalty series stripped
+%%     type-driven from the line copy must agree within 1sp. Unknown
+%%     nodes (chars, whatsits, discs) abort the recovery with an error.
+%%  5. Final line: the ltj aw_step1_last parfillskip condition; the
+%%     candidates ranked (|rem/total|, |rem|, |e|, e) lexicographically
+%%     (infinite orders take precedence; forbidden shrink/0-div/NaN
+%%     structurally avoided). Non-final lines keep the native candidate.
+%%  6. Priority fill per line (tier scale: JFM priority*10, kanjiskip 0,
+%%     xkanjiskip +10 stretch / -30 shrink, explicit glue 50; higher
+%%     tier first; the partially filled tier distributes proportionally;
+%%     stretch/shrink separate; finite shrink overflow = typeset defect
+%%     reported like TeX's own). sp-integer arithmetic, source-order
+%%     rounding, exact line width.
+%%  7. Assembly per line: the measurement line box is destructured by a
+%%     reverse node walk (boxes/glues/kerns/penalties only -- guaranteed
+%%     by the itemizer), the recorded glue data is applied by replacing
+%%     every glue with a fixed kern of its final size, and the line is
+%%     rebuilt in order by a second reverse pass (list reversal via the
+%%     \unhbox-append idiom); the rebuilt line must equal the measured
+%%     width within 1sp. Interline glue/penalties are replayed from the
+%%     walk; parskip was 0 during measurement and the ambient parskip is
+%%     inserted once at output; the first line box is appended to the
+%%     outer vlist so the outer prevdepth produces the normal baselineskip
+%%     glue; prevdepth/prevgraf are updated at the end. Markers and
+%%     measurement copies never ship out.
+%%
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pdftexja-paragraph}
+  [2026/10/25 v0.1 jlreq strict paragraph environment]
+\RequirePackage{pdftexja-rules}
+
+\@ifundefined{pdftexja@pairspri}{%
+  \PackageError{pdftexja-paragraph}{pdftexja-rules~(P3)~not~loaded}{%
+    This module is loaded by pdftexja.sty; the P3 priority registers
+    are a hard prerequisite.\MessageBreak \@ehc}}{}
+
+% ============================================================================
+% 0. Scratch / node types
+% ============================================================================
+\newcount\pdftexjapar@a \newcount\pdftexjapar@b \newcount\pdftexjapar@c
+\newdimen\pdftexjapar@da \newdimen\pdftexjapar@db \newdimen\pdftexjapar@dc
+% \lastnodetype (probed on pdfTeX): 0 char, 1 h/vlist, 2 ligature,
+% 3 rule, 4 disc, 5 math, 8 whatsit, 10 mark, 11 glue, 12 kern,
+% 13 penalty, -1 empty list.
+\mathchardef\pdftexjapar@t@char=0
+\mathchardef\pdftexjapar@t@box=1
+\mathchardef\pdftexjapar@t@disc=4
+\mathchardef\pdftexjapar@t@whatsit=8
+\mathchardef\pdftexjapar@t@glue=11
+\mathchardef\pdftexjapar@t@kern=12
+\mathchardef\pdftexjapar@t@pen=13
+
+% ============================================================================
+% 1. Parameter snapshot (the full parameter list)
+% ============================================================================
+\newdimen\pdftexjapar@hsize      \newdimen\pdftexjapar@parindent
+\newskip\pdftexjapar@parskip    \newskip\pdftexjapar@leftskip
+\newskip\pdftexjapar@rightskip  \newskip\pdftexjapar@parfillskip
+\newskip\pdftexjapar@spaceskip  \newskip\pdftexjapar@xspaceskip
+\newskip\pdftexjapar@baselineskip \newskip\pdftexjapar@lineskip
+\newdimen\pdftexjapar@lineskiplimit
+\newdimen\pdftexjapar@hangindent \newcount\pdftexjapar@hangafter
+\newdimen\pdftexjapar@emergencystretch
+\newcount\pdftexjapar@pretolerance \newcount\pdftexjapar@tolerance
+\newcount\pdftexjapar@linepenalty \newcount\pdftexjapar@hyphenpenalty
+\newcount\pdftexjapar@exhyphenpenalty
+\newcount\pdftexjapar@adjdemerits \newcount\pdftexjapar@doublehyphendemerits
+\newcount\pdftexjapar@finalhyphendemerits \newcount\pdftexjapar@looseness
+\newcount\pdftexjapar@clubpenalty \newcount\pdftexjapar@widowpenalty
+\newcount\pdftexjapar@interlinepenalty \newcount\pdftexjapar@brokenpenalty
+\newcount\pdftexjapar@prevgraf   \newdimen\pdftexjapar@prevdepth
+\def\pdftexjapar@clubpenalties{0}
+\def\pdftexjapar@widowpenalties{0}
+\def\pdftexjapar@interlinepenalties{0}
+\def\pdftexjapar@pshapelen{0}
+\def\pdftexjapar@pshapedata{}
+
+\def\pdftexjapar@snapshot{%
+  \global\pdftexjapar@hsize=\hsize
+  \global\pdftexjapar@parindent=\parindent
+  \global\pdftexjapar@parskip=\parskip
+  \global\pdftexjapar@leftskip=\leftskip
+  \global\pdftexjapar@rightskip=\rightskip
+  \global\pdftexjapar@parfillskip=\parfillskip
+  \global\pdftexjapar@spaceskip=\spaceskip
+  \global\pdftexjapar@xspaceskip=\xspaceskip
+  \global\pdftexjapar@baselineskip=\baselineskip
+  \global\pdftexjapar@lineskip=\lineskip
+  \global\pdftexjapar@lineskiplimit=\lineskiplimit
+  \global\pdftexjapar@hangindent=\hangindent
+  \global\pdftexjapar@hangafter=\hangafter
+  \global\pdftexjapar@emergencystretch=\emergencystretch
+  \global\pdftexjapar@pretolerance=\pretolerance
+  \global\pdftexjapar@tolerance=\tolerance
+  \global\pdftexjapar@linepenalty=\linepenalty
+  \global\pdftexjapar@hyphenpenalty=\hyphenpenalty
+  \global\pdftexjapar@exhyphenpenalty=\exhyphenpenalty
+  \global\pdftexjapar@adjdemerits=\adjdemerits
+  \global\pdftexjapar@doublehyphendemerits=\doublehyphendemerits
+  \global\pdftexjapar@finalhyphendemerits=\finalhyphendemerits
+  \global\pdftexjapar@looseness=\looseness
+  \global\pdftexjapar@clubpenalty=\clubpenalty
+  \global\pdftexjapar@widowpenalty=\widowpenalty
+  \global\pdftexjapar@interlinepenalty=\interlinepenalty
+  \global\pdftexjapar@brokenpenalty=\brokenpenalty
+  \global\pdftexjapar@prevgraf=\prevgraf
+  \global\pdftexjapar@prevdepth=\prevdepth
+  % e-TeX penalty ARRAYS: \the\<array> is invalid; read the count and
+  % the elements via \numexpr\<array> <idx>\relax (probed: idx 0 = the
+  % entry count, idx i>=1 = element i; zero errors).
+  \pdftexjapar@a=\numexpr\clubpenalties 0\relax
+  \edef\pdftexjapar@clubpenalties{\the\pdftexjapar@a}%
+  \pdftexjapar@b=0
+  \pdftexjapar@arrloop\clubpenalties\pdftexjapar@clubpenalties
+  \pdftexjapar@a=\numexpr\widowpenalties 0\relax
+  \edef\pdftexjapar@widowpenalties{\the\pdftexjapar@a}%
+  \pdftexjapar@b=0
+  \pdftexjapar@arrloop\widowpenalties\pdftexjapar@widowpenalties
+  \pdftexjapar@a=\numexpr\interlinepenalties 0\relax
+  \edef\pdftexjapar@interlinepenalties{\the\pdftexjapar@a}%
+  \pdftexjapar@b=0
+  \pdftexjapar@arrloop\interlinepenalties\pdftexjapar@interlinepenalties
+  \pdftexjapar@snap@parshape}
+% \pdftexjapar@arrloop{<array>}{<target macro>}: append elements 1..n
+\def\pdftexjapar@arrloop#1#2{%
+  \ifnum\pdftexjapar@b<\pdftexjapar@a
+    \advance\pdftexjapar@b1
+    \pdftexjapar@c=\numexpr#1 \pdftexjapar@b\relax
+    \expandafter\edef\expandafter#2\expandafter{#2\space\the\pdftexjapar@c}%
+    \expandafter\pdftexjapar@arrloop\expandafter#1\expandafter#2
+  \fi}
+
+% parshape snapshot (probed semantics):
+%   \numexpr\parshape 0\relax    = the line count n
+%   \parshapedimen<k>            = spec entries: k=2i-1 the indent of
+%                                 line i, k=2i the width of line i
+% (the whole shape is re-declared in the measurement vbox with the
+% same data; the comparison flow receives the same values).
+\def\pdftexjapar@snap@parshape{%
+  \def\pdftexjapar@pshapelen{0}\def\pdftexjapar@pshapedata{}%
+  % the count read leaks a typeset "0" into the CURRENT LIST when no
+  % shape is active (probed); perform it inside a discarded hbox.
+  \setbox\pdftexjapar@curbox=\vbox{\global\pdftexjapar@a=\numexpr\parshape 0\relax}%
+  \ifnum\pdftexjapar@a>0
+    \gdef\pdftexjapar@pshapedata{}%
+    \pdftexjapar@b=0
+    \pdftexjapar@pshape@loop
+    \edef\pdftexjapar@pshapelen{\the\pdftexjapar@b}%
+  \fi}
+\def\pdftexjapar@pshape@loop{%
+  \ifnum\pdftexjapar@b<\pdftexjapar@a
+    \advance\pdftexjapar@b1
+    \pdftexjapar@c=\numexpr 2*\pdftexjapar@b-1\relax
+    \pdftexjapar@da=\parshapedimen\pdftexjapar@c\relax
+    \advance\pdftexjapar@c1
+    \pdftexjapar@db=\parshapedimen\pdftexjapar@c\relax
+    \expandafter\edef\csname pdftexjapar@pshapedata\endcsname{%
+      \pdftexjapar@pshapedata
+      {\the\pdftexjapar@da\space\the\pdftexjapar@db}}%
+    \expandafter\pdftexjapar@pshape@loop
+  \fi}
+
+% ============================================================================
+% 2. Item model (KEYED csname storage; TeX macros take <=9 parameters)
+% ============================================================================
+%   \pdftexjapar@ITk@<id> kind: 1 cjk 2 word 3 math 4 tcy 5 opaque 6 ruby
+%                             7 space 8 hspace 9 kern 10 penalty 11 label
+%   \pdftexjapar@ITb@<id> box register name (empty for glue/penalty items)
+%   \pdftexjapar@ITg@<id> {wd}{ht}{dp}   pt strings
+%   \pdftexjapar@ITc@<id> {first}{last}  JFM classes at the run edges
+%   \pdftexjapar@ITp@<id> {spri}{shpri}  RIGHT-edge pair tier (JFM*10 scale
+%                                    applied at fill time)
+%   \pdftexjapar@ITG@<id> {nat}{str}{shr} RIGHT-edge pair glue pt strings
+%   \pdftexjapar@ITK@<id> {knat}{kstr}{kshr} kanjiskip companion pt strings
+%   \pdftexjapar@ITn@<id> kin penalty at the RIGHT edge
+%   \pdftexjapar@ITe@<id> end_adjust candidates of the LAST class (list)
+%   \pdftexjapar@ITz@<id> zw     \pdftexjapar@ITf@<id> font
+%   \pdftexjapar@ITx@<id> extra: explicit glue spec for kind 7/8 (5 fields:
+%                             {nat}{str}{shr}{sorder}{shorder}), penalty
+%                             value for kind 10, marker text for 11
+\newcount\pdftexjapar@nitems
+\newcount\pdftexjapar@poolcur
+\newcount\pdftexjapar@poolhi
+\newbox\pdftexjapar@curbox
+
+% pool: \pdftexjapar@PB@<n> box registers, reused across envs.
+% The registers are allocated at LOAD time (a fixed pool of 64): the
+% walk runs inside a box group, where a \newbox \chardef would be
+% LOCAL and vanish at the group close (probed: pool copies read back
+% void). A load-time pool is group-proof and bounds the nesting.
+\newcount\pdftexjapar@poolmax \pdftexjapar@poolmax=64
+\def\pdftexjapar@poolinit{%
+  \pdftexjapar@poolcur=0
+  \loop
+    \advance\pdftexjapar@poolcur1
+    \expandafter\expandafter\expandafter\newbox
+      \csname pdftexjapar@PB@\the\pdftexjapar@poolcur\endcsname
+  \ifnum\pdftexjapar@poolcur<\pdftexjapar@poolmax
+  \repeat}
+\pdftexjapar@poolinit
+\def\pdftexjapar@poolalloc#1{%
+  \global\advance\pdftexjapar@poolcur1
+  \ifnum\pdftexjapar@poolcur>\pdftexjapar@poolmax
+    \PackageError{pdftexja-paragraph}{box~pool~exhausted}{%
+      The~strict~paragraph~needs~more~than~
+      \the\pdftexjapar@poolmax\space pooled~box~registers.%
+      \MessageBreak \@ehc}%
+  \fi
+  \edef#1{pdftexjapar@PB@\the\pdftexjapar@poolcur}}
+
+% field scratch: filled by the capture hooks, read by \itemsave/\itload
+\newcount\pdftexjapar@F@kind
+\def\pdftexjapar@F@box{}
+\newcount\pdftexjapar@F@first
+\newcount\pdftexjapar@F@last
+\newcount\pdftexjapar@F@spri
+\newcount\pdftexjapar@F@shpri
+\def\pdftexjapar@F@nat{0pt}
+\def\pdftexjapar@F@str{0pt}
+\def\pdftexjapar@F@shr{0pt}
+\def\pdftexjapar@F@knat{0pt}
+\def\pdftexjapar@F@kstr{0pt}
+\def\pdftexjapar@F@kshr{0pt}
+\newcount\pdftexjapar@F@kin
+\def\pdftexjapar@F@ea{}
+\def\pdftexjapar@F@zw{0pt}
+\def\pdftexjapar@F@font{}
+\def\pdftexjapar@F@extra{}
+
+\def\pdftexjapar@itemsave{%
+  \global\advance\pdftexjapar@nitems1
+  \expandafter\xdef\csname pdftexjapar@ITk@\the\pdftexjapar@nitems\endcsname
+    {\the\pdftexjapar@F@kind}%
+  \expandafter\xdef\csname pdftexjapar@ITb@\the\pdftexjapar@nitems\endcsname
+    {\pdftexjapar@F@box}%
+  \expandafter\xdef\csname pdftexjapar@ITg@\the\pdftexjapar@nitems\endcsname
+    {{\the\wd\pdftexjapar@curbox}{\the\ht\pdftexjapar@curbox}%
+     {\the\dp\pdftexjapar@curbox}}%
+  \expandafter\xdef\csname pdftexjapar@ITc@\the\pdftexjapar@nitems\endcsname
+    {{\the\pdftexjapar@F@first}{\the\pdftexjapar@F@last}}%
+  \expandafter\xdef\csname pdftexjapar@ITp@\the\pdftexjapar@nitems\endcsname
+    {{\the\pdftexjapar@F@spri}{\the\pdftexjapar@F@shpri}}%
+  \expandafter\xdef\csname pdftexjapar@ITG@\the\pdftexjapar@nitems\endcsname
+    {{\pdftexjapar@F@nat}{\pdftexjapar@F@str}{\pdftexjapar@F@shr}}%
+  \expandafter\xdef\csname pdftexjapar@ITK@\the\pdftexjapar@nitems\endcsname
+    {{\pdftexjapar@F@knat}{\pdftexjapar@F@kstr}{\pdftexjapar@F@kshr}}%
+  \expandafter\xdef\csname pdftexjapar@ITn@\the\pdftexjapar@nitems\endcsname
+    {\the\pdftexjapar@F@kin}%
+  \expandafter\xdef\csname pdftexjapar@ITe@\the\pdftexjapar@nitems\endcsname
+    {\pdftexjapar@F@ea}%
+  \expandafter\xdef\csname pdftexjapar@ITz@\the\pdftexjapar@nitems\endcsname
+    {\pdftexjapar@F@zw}%
+  \expandafter\xdef\csname pdftexjapar@ITf@\the\pdftexjapar@nitems\endcsname
+    {\pdftexjapar@F@font}%
+  \expandafter\xdef\csname pdftexjapar@ITx@\the\pdftexjapar@nitems\endcsname
+    {\pdftexjapar@F@extra}}
+
+\def\pdftexjapar@itload#1{%
+  \pdftexjapar@F@kind=\csname pdftexjapar@ITk@#1\endcsname\relax
+  \edef\pdftexjapar@F@box{\csname pdftexjapar@ITb@#1\endcsname}%
+  \expandafter\pdftexjapar@split@geo\csname pdftexjapar@ITg@#1\endcsname
+  \expandafter\pdftexjapar@split@cls\csname pdftexjapar@ITc@#1\endcsname
+  \expandafter\pdftexjapar@split@pri\csname pdftexjapar@ITp@#1\endcsname
+  \expandafter\pdftexjapar@split@glu\csname pdftexjapar@ITG@#1\endcsname
+  \expandafter\pdftexjapar@split@kan\csname pdftexjapar@ITK@#1\endcsname
+  \pdftexjapar@F@kin=\csname pdftexjapar@ITn@#1\endcsname\relax
+  \edef\pdftexjapar@F@ea{\csname pdftexjapar@ITe@#1\endcsname}%
+  \pdftexjapar@da=\csname pdftexjapar@ITz@#1\endcsname\relax
+  \edef\pdftexjapar@F@zw{\the\pdftexjapar@da}%
+  \edef\pdftexjapar@F@font{\csname pdftexjapar@ITf@#1\endcsname}%
+\edef\pdftexjapar@F@extra{\csname pdftexjapar@ITx@#1\endcsname}}
+\def\pdftexjapar@split@geo#1#2#3{%
+  \wd\pdftexjapar@curbox=#1\relax
+  \ht\pdftexjapar@curbox=#2\relax
+  \dp\pdftexjapar@curbox=#3\relax}
+\def\pdftexjapar@split@cls#1#2{%
+  \pdftexjapar@F@first=#1\relax
+  \pdftexjapar@F@last=#2\relax}
+\def\pdftexjapar@split@pri#1#2{%
+  \pdftexjapar@F@spri=#1\relax
+  \pdftexjapar@F@shpri=#2\relax}
+\def\pdftexjapar@split@glu#1#2#3{%
+  \def\pdftexjapar@F@nat{#1}\def\pdftexjapar@F@str{#2}%
+  \def\pdftexjapar@F@shr{#3}}
+\def\pdftexjapar@split@kan#1#2#3{%
+  \def\pdftexjapar@F@knat{#1}\def\pdftexjapar@F@kstr{#2}%
+  \def\pdftexjapar@F@kshr{#3}}
+
+% ============================================================================
+% 3. The environment shell
+% ============================================================================
+% The environment SPANS the measurement: the begin-code opens the
+% measurement vbox (\bgroup after \vbox), the document body is typeset
+% ONCE inside it (the capture hooks record items as they appear), and
+% the end-code closes the vbox and runs the strict flow. (A delimited
+% \end{...} grab is impossible: `{` cannot appear in a \def parameter
+% text.)
+\newenvironment{pdftexjaparagraph}{%
+  \par
+  \pdftexjapar@snapshot
+  \pdftexjapar@measure@open
+}{\pdftexjapar@measure@close}
+% ============================================================================
+% 5. The reverse walk: per-line item ranges + interline glue/penalties
+% ============================================================================
+% walk data (GLOBAL; the walk runs inside the box-building group):
+%   \pdftexjapar@LN@<n>@from/@to  item id range of line n (1-based,
+%                             recovered in REVERSE: line ids count up
+%                             as the walk descends)
+%   \pdftexjapar@LN@<n>@wd/@box   measured width / pool box register name
+%   \pdftexjapar@LX@<n>@glue      interline glue BEFORE line n as
+%                             {nat}{str}{shr}{sord}{shord} pt strings
+%   \pdftexjapar@LX@<n>@pen       penalty list BEFORE line n (text list)
+\newcount\pdftexjapar@wline
+\newcount\pdftexjapar@wlastmark  % highest marker id seen so far
+\newcount\pdftexjapar@wka \newcount\pdftexjapar@wkb
+\newcount\pdftexjapar@wsum
+\newbox\pdftexjapar@wlinebox
+\newskip\pdftexjapar@wskip
+
+\newbox\pdftexjapar@walkbox
+\def\pdftexjapar@walk{%
+  \global\pdftexjapar@wline=0
+  \global\pdftexjapar@wsum=0
+  \global\pdftexjapar@wlastmark=0
+  \xdef\pdftexjapar@LN@1@from{1}%
+  \setbox\pdftexjapar@walkbox=\vbox{%
+    \unvbox\pdftexjapar@measbox
+    \pdftexjapar@walk@step}%
+  % NOTE: the recount/assemble runs OUTSIDE the walkbox group. Inside
+  % the walkbox TeX is in INTERNAL vertical mode -- emitted line
+  % boxes would land in the (discarded) walkbox (probed: the strict
+  % lines silently vanished). After the vbox closes we are back in
+  % the enclosing mode and the assembly appends to the real vlist.
+  \pdftexjapar@recount}
+
+% one reverse-walk step. \lastnodetype is invalidated by \write-type
+% operations; between reads only pops/assignments happen.
+\def\pdftexjapar@walk@step{%
+  \ifnum\lastnodetype=-1
+    \let\pdftexjapar@wnext\pdftexjapar@walk@end
+  \else
+    \ifnum\lastnodetype=\pdftexjapar@t@kern
+      \let\pdftexjapar@wnext\pdftexjapar@walk@kern
+    \else
+    \ifnum\lastnodetype=\pdftexjapar@t@box
+      \let\pdftexjapar@wnext\pdftexjapar@walk@box
+    \else
+    \ifnum\lastnodetype=\pdftexjapar@t@glue
+      \let\pdftexjapar@wnext\pdftexjapar@walk@glue
+    \else
+    \ifnum\lastnodetype=\pdftexjapar@t@pen
+      \let\pdftexjapar@wnext\pdftexjapar@walk@pen
+    \else
+      \let\pdftexjapar@wnext\pdftexjapar@walk@end
+    \fi\fi\fi\fi
+  \fi
+  \pdftexjapar@wnext}
+
+% kern handling. A MARKER is a \kern<id>sp\kern-<id>sp pair (both
+% members nonzero, exact negations). Other kerns are LAYOUT kerns
+% (the rules backend's para/end tail kern etc.) and must be popped
+% singly and kept in the interline record. The distinction is made by
+% peeking: pop the first kern; if the NEXT node is a kern whose value
+% is the exact negation and both nonzero, it is a marker pair;
+% otherwise the first kern was a layout kern (record it and treat the
+% next node from the top of the walk).
+\def\pdftexjapar@walk@kern{%
+  \global\pdftexjapar@wka=\lastkern
+  \unkern
+  \ifnum\lastnodetype=\pdftexjapar@t@kern
+    \global\pdftexjapar@wkb=\lastkern
+    \ifnum-\pdftexjapar@wka=\pdftexjapar@wkb
+      \ifnum\pdftexjapar@wka=0
+        % 0/0 pair: not a marker; drop both (net 0) and continue.
+        \unkern
+        \pdftexjapar@walk@step
+      \else
+        % marker pair: pop the partner, record the id.
+        \unkern
+        \global\advance\pdftexjapar@wsum\pdftexjapar@wka
+        \global\advance\pdftexjapar@wsum\pdftexjapar@wkb
+        \ifnum\pdftexjapar@wkb<0
+          \global\pdftexjapar@wlastmark=-\pdftexjapar@wkb
+        \else
+          \global\pdftexjapar@wlastmark=\pdftexjapar@wkb
+        \fi
+        \pdftexjapar@walk@step
+      \fi
+    \else
+      % two kerns, NOT a marker pair: the first was layout; the second
+      % is re-processed as the walk's next node (it is still the LAST
+      % node -- do not pop it here).
+      \pdftexjapar@kern@record
+      \pdftexjapar@walk@step
+    \fi
+  \else
+    % single kern (no kern follower): layout kern.
+    \pdftexjapar@kern@record
+    \pdftexjapar@walk@step
+  \fi}
+% layout kern record: goes to the interline zone (currently the
+% interline kerns are simply consumed; the assembly replays glue and
+% penalties only, which suffices for baseline glue correctness).
+\def\pdftexjapar@kern@record{\relax}
+
+% a line box: close the line's item range, stash the box.
+\def\pdftexjapar@walk@box{%
+  \setbox\pdftexjapar@wlinebox=\lastbox
+  \global\advance\pdftexjapar@wline1
+  \expandafter\xdef\csname pdftexjapar@LN@\the\pdftexjapar@wline @to\endcsname
+    {\the\pdftexjapar@wlastmark}%
+  \expandafter\xdef\csname pdftexjapar@LN@\the\pdftexjapar@wline @wd\endcsname
+    {\the\wd\pdftexjapar@wlinebox}%
+  \pdftexjapar@poolalloc\pdftexjapar@regname
+  \expandafter\global\expandafter\setbox
+    \csname\pdftexjapar@regname\endcsname=\copy\pdftexjapar@wlinebox
+  \expandafter\xdef\csname pdftexjapar@LN@\the\pdftexjapar@wline @box\endcsname
+    {\pdftexjapar@regname}%
+  % the NEXT (lower) line starts after this line's last item
+  \expandafter\xdef
+    \csname pdftexjapar@LN@\the\numexpr\pdftexjapar@wline+1\space @from\endcsname
+    {\the\numexpr\pdftexjapar@wlastmark+1}%
+  \pdftexjapar@walk@step}
+
+% interline glue (before the line below): record the FULL skip text
+% (\the<skip> keeps the plus/minus and fil orders verbatim).
+\def\pdftexjapar@walk@glue{%
+  \global\pdftexjapar@wskip=\lastskip
+  \unskip
+  \expandafter\xdef
+    \csname pdftexjapar@LX@\the\numexpr\pdftexjapar@wline+1\space @glue\endcsname
+    {\the\pdftexjapar@wskip}%
+  \pdftexjapar@walk@step}
+
+\def\pdftexjapar@walk@pen{%
+  \expandafter\ifx\csname pdftexjapar@LX@\the\numexpr\pdftexjapar@wline+1\space
+      @pen\endcsname\relax
+    % first penalty of this zone: seed the list (COMMA separated)
+    \expandafter\xdef
+      \csname pdftexjapar@LX@\the\numexpr\pdftexjapar@wline+1\space @pen\endcsname
+      {\the\lastpenalty}%
+  \else
+    \expandafter\let\expandafter\pdftexjapar@pentmp
+      \csname pdftexjapar@LX@\the\numexpr\pdftexjapar@wline+1\space @pen\endcsname
+    \expandafter\xdef
+      \csname pdftexjapar@LX@\the\numexpr\pdftexjapar@wline+1\space @pen\endcsname
+      {\the\lastpenalty,\pdftexjapar@pentmp}%
+  \fi
+  \unpenalty
+  \pdftexjapar@walk@step}
+
+\def\pdftexjapar@walk@end{%
+  \ifnum\pdftexjapar@wsum=0\else
+    \PackageError{pdftexja-paragraph}{marker~net~sum~nonzero}%
+      {Markers~must~sum~to~zero;~got~\the\pdftexjapar@wsum sp.%
+       \MessageBreak \@ehc}%
+  \fi
+  % descending walk done; the driver (outside the walkbox) recounts.
+  \relax}
+
+% The walk numbered lines BOTTOM-UP (wline counts up while
+% descending). Re-key the walk data to TOP-DOWN line numbers.
+\def\pdftexjapar@recount{%
+  \pdftexjapar@a=\pdftexjapar@wline % bottom-up count == total lines
+  \global\pdftexjapar@nlines=\pdftexjapar@wline
+  \pdftexjapar@b=0
+  \pdftexjapar@recount@loop
+  % assemble ONCE (the old tail-call shape ran it once per level).
+  \pdftexjapar@assemble}
+\def\pdftexjapar@recount@loop{%
+  \ifnum\pdftexjapar@b<\pdftexjapar@a
+    \advance\pdftexjapar@b1
+    % bottom-up line b == top-down line (a-b+1)
+    \pdftexjapar@c=\numexpr\pdftexjapar@a-\pdftexjapar@b+1\relax
+    \expandafter\let\expandafter\pdftexjapar@tmp
+      \csname pdftexjapar@LN@\the\pdftexjapar@b @from\endcsname
+    \expandafter\xdef\csname pdftexjapar@NL@\the\pdftexjapar@c @from\endcsname
+      {\pdftexjapar@tmp}%
+    \expandafter\let\expandafter\pdftexjapar@tmp
+      \csname pdftexjapar@LN@\the\pdftexjapar@b @to\endcsname
+    \expandafter\xdef\csname pdftexjapar@NL@\the\pdftexjapar@c @to\endcsname
+      {\pdftexjapar@tmp}%
+    \expandafter\let\expandafter\pdftexjapar@tmp
+      \csname pdftexjapar@LN@\the\pdftexjapar@b @wd\endcsname
+    \expandafter\xdef\csname pdftexjapar@NL@\the\pdftexjapar@c @wd\endcsname
+      {\pdftexjapar@tmp}%
+    \expandafter\let\expandafter\pdftexjapar@tmp
+      \csname pdftexjapar@LN@\the\pdftexjapar@b @box\endcsname
+    \expandafter\xdef\csname pdftexjapar@NL@\the\pdftexjapar@c @box\endcsname
+      {\pdftexjapar@tmp}%
+    % interline data BEFORE bottom-up line b sits between b and b-1;
+    % top-down it belongs after top-down line c=a-b+1 (the zone before
+    % the BOTTOM line, b=1, is the parskip zone -- dropped).
+    \expandafter\ifx\csname pdftexjapar@LX@\the\pdftexjapar@b @glue\endcsname\relax
+    \else
+      \expandafter\let\expandafter\pdftexjapar@tmp
+        \csname pdftexjapar@LX@\the\pdftexjapar@b @glue\endcsname
+      \expandafter\xdef
+        \csname pdftexjapar@LX@\the\pdftexjapar@c @glue\endcsname{\pdftexjapar@tmp}%
+    \fi
+    \expandafter\ifx\csname pdftexjapar@LX@\the\pdftexjapar@b @pen\endcsname\relax
+    \else
+      \expandafter\let\expandafter\pdftexjapar@tmp
+        \csname pdftexjapar@LX@\the\pdftexjapar@b @pen\endcsname
+      \expandafter\xdef
+        \csname pdftexjapar@LX@\the\pdftexjapar@c @pen\endcsname{\pdftexjapar@tmp}%
+    \fi
+    % tail recursion: when done, simply return (the driver assembles).
+    \expandafter\pdftexjapar@recount@loop
+  \fi}
+% ============================================================================
+% 4. The strict flow (spanning environment: open -> body -> close)
+% ============================================================================
+\newbox\pdftexjapar@measbox
+\newcount\pdftexjapar@nlines
+
+% begin-code tail: opens the measurement vbox. The document body is
+% typeset ONCE inside it; the capture hooks record the items.
+\def\pdftexjapar@measure@open{%
+  \global\pdftexjapar@nitems=0
+  \global\pdftexjapar@poolcur=0
+  \begingroup
+    \hsize=\pdftexjapar@hsize
+    \parindent=\pdftexjapar@parindent
+    \leftskip=\pdftexjapar@leftskip
+    \rightskip=\pdftexjapar@rightskip
+    \parfillskip=\pdftexjapar@parfillskip
+    \baselineskip=\pdftexjapar@baselineskip
+    \lineskip=\pdftexjapar@lineskip
+    \lineskiplimit=\pdftexjapar@lineskiplimit
+    \pretolerance=\pdftexjapar@pretolerance
+    \tolerance=\pdftexjapar@tolerance
+    \emergencystretch=\pdftexjapar@emergencystretch
+    \linepenalty=\pdftexjapar@linepenalty
+    \hyphenpenalty=\pdftexjapar@hyphenpenalty
+    \exhyphenpenalty=\pdftexjapar@exhyphenpenalty
+    \adjdemerits=\pdftexjapar@adjdemerits
+    \doublehyphendemerits=\pdftexjapar@doublehyphendemerits
+    \finalhyphendemerits=\pdftexjapar@finalhyphendemerits
+    \looseness=\pdftexjapar@looseness
+    \clubpenalty=\pdftexjapar@clubpenalty
+    \widowpenalty=\pdftexjapar@widowpenalty
+    \interlinepenalty=\pdftexjapar@interlinepenalty
+    \brokenpenalty=\pdftexjapar@brokenpenalty
+    \hangindent=\pdftexjapar@hangindent
+    \hangafter=\pdftexjapar@hangafter
+    \ifx\parshapelength\undefined\else
+      \ifnum\pdftexjapar@pshapelen>0
+        \expandafter\parshape\number\pdftexjapar@pshapelen\pdftexjapar@pshapedata
+      \fi
+    \fi
+    \parskip=0pt        % measurement parskip = 0
+    \spaceskip=\pdftexjapar@spaceskip
+    \xspaceskip=\pdftexjapar@xspaceskip
+    \pdftexjapar@setup@hooks
+    % NOTE: boxing every 1zw glyph (\pdftexja@boxglyphs=1) was
+    % probed and REJECTED for the default path -- it changes the
+    % inter-glyph node stream enough to alter native line breaks
+    % (overfull regressions in strict-basic). The distribution engine
+    % instead walks what IS walkable: punct-class glyphs are already
+    % JFM-width boxes natively, and lines whose interior still
+    % holds bare chars/whatsits/ins nodes are SKIPPED (native line
+    % box kept; \pdftexjapar@distskip). Setting the flag remains
+    % available for the follow-up that boxes latin words as items.
+    \global\pdftexja@boxglyphs=1
+    \global\setbox\pdftexjapar@measbox=\vbox\bgroup}
+
+% end-code: closes the measurement vbox, then runs the strict flow.
+\def\pdftexjapar@measure@close{%
+      % the last glyph's class/zw for aw_step1_last are captured by the
+      % placeglyph hook (\pdftexjapar@lastcls/\pdftexjapar@lastzw) -- reading
+      % \pdftexja@lastclass HERE is wrong: the trailing input space has
+      % already turned it into 93 (probed).
+      \par
+    \egroup
+    \pdftexjapar@teardown@hooks
+    % restore the native glyph mode for the text AFTER the environment
+    % (the measurement used boxed glyphs; the outer native paragraphs
+    % must keep the unboxed stream)
+    \global\pdftexja@boxglyphs=0
+    % line count is recovered by the walk (recount sets \nlines).
+  \endgroup
+  \pdftexjapar@walk}
+
+% ---------------------------------------------------------------------------
+% 4b. item capture hooks
+% ---------------------------------------------------------------------------
+\def\pdftexjapar@setup@hooks{%
+  \global\pdftexjapar@bdseq=0
+  \pdftexjapar@hook@emitters
+  \pdftexjapar@hook@hbox
+  \pdftexjapar@hook@explicit
+  \pdftexjapar@hook@forbidden}
+\def\pdftexjapar@teardown@hooks{%
+  \pdftexjapar@unhook@emitters
+  \pdftexjapar@unhook@hbox
+  \pdftexjapar@unhook@explicit
+  \pdftexjapar@unhook@forbidden}
+
+% marker: net-zero kern pair via \vadjust (horizontal mode only)
+\def\pdftexjapar@mark{%
+  \vadjust{\kern\the\pdftexjapar@nitems sp\kern-\the\pdftexjapar@nitems sp}}
+
+% --- \mbox/\makebox -> one opaque item --------------------------------------
+\def\pdftexjapar@hook@hbox{%
+  \let\pdftexjapar@saved@mbox\mbox
+  \let\pdftexjapar@saved@makebox\makebox
+  \def\mbox{\pdftexjapar@cap@mbox}%
+  \def\makebox{\pdftexjapar@cap@makebox}}
+\def\pdftexjapar@unhook@hbox{%
+  \let\mbox\pdftexjapar@saved@mbox
+  \let\makebox\pdftexjapar@saved@makebox}
+\long\def\pdftexjapar@cap@mbox#1{%
+  \pdftexjapar@cap@opaque{\hbox{#1}}}
+\def\pdftexjapar@cap@makebox{%
+  \@ifnextchar[{\pdftexjapar@cap@makebox@a}{\pdftexjapar@cap@makebox@plain}}
+\long\def\pdftexjapar@cap@makebox@plain#1{%
+  \pdftexjapar@cap@opaque{\hbox{#1}}}
+\def\pdftexjapar@cap@makebox@a[#1]{%
+  \@ifnextchar[{\pdftexjapar@cap@makebox@b[#1]}{\pdftexjapar@cap@makebox@w[#1]}}
+\long\def\pdftexjapar@cap@makebox@w[#1]#2{%
+  \pdftexjapar@skipval=#1\relax
+  \pdftexjapar@cap@opaque{\hb@xt@ \pdftexjapar@skipval{#2}}}
+% makebox with an explicit position: the kernel's \mb@xt@ is not
+% available in this format build (probed: undefined); realize the
+% four positions with \hb@xt@ and \hss spacers directly.
+\long\def\pdftexjapar@cap@makebox@b[#1][#2]#3{%
+  \pdftexjapar@cap@opaque{\hb@xt@ #1{%
+    \def\pdftexjapar@mbpos{#2}%
+    \def\pdftexjapar@mbtmp{s}\ifx\pdftexjapar@mbpos\pdftexjapar@mbtmp
+      \hss#3\hss
+    \else
+      \def\pdftexjapar@mbtmp{l}\ifx\pdftexjapar@mbpos\pdftexjapar@mbtmp
+        \hss#3%
+      \else
+        \def\pdftexjapar@mbtmp{c}\ifx\pdftexjapar@mbpos\pdftexjapar@mbtmp
+          \hss#3\hss
+        \else
+          #3\hss
+        \fi
+      \fi
+    \fi}}}
+% capture: build the box ONCE into a pool register, record the item and
+% the marker, then CONTRIBUTE the same box to the measurement stream.
+\long\def\pdftexjapar@cap@opaque#1{%
+  \pdftexjapar@poolalloc\pdftexjapar@regname
+  \expandafter\setbox\csname\pdftexjapar@regname\endcsname=#1%
+  \pdftexjapar@F@kind=5
+  \edef\pdftexjapar@F@box{\pdftexjapar@regname}%
+  \setbox\pdftexjapar@curbox=\expandafter\copy
+    \csname\pdftexjapar@regname\endcsname
+  \pdftexjapar@readpairstate
+  \pdftexjapar@itemsave
+  \pdftexjapar@mark
+  \expandafter\box\csname\pdftexjapar@regname\endcsname}
+\def\pdftexjapar@regname{pdftexjapar@PB@0}
+
+% snapshot the CURRENT boundary state into the field scratch.
+\def\pdftexjapar@readpairstate{%
+  \pdftexjapar@F@first=\pdftexja@lastclass
+  \pdftexjapar@F@last=\pdftexja@lastclass
+  \pdftexjapar@F@spri=0
+  \pdftexjapar@F@shpri=0
+  \def\pdftexjapar@F@nat{0pt}%
+  \def\pdftexjapar@F@str{0pt}%
+  \def\pdftexjapar@F@shr{0pt}%
+  \def\pdftexjapar@F@knat{0pt}%
+  \def\pdftexjapar@F@kstr{0pt}%
+  \def\pdftexjapar@F@kshr{0pt}%
+  \pdftexjapar@F@kin=0
+  \def\pdftexjapar@F@ea{}%
+  \pdftexjapar@da=\pdftexja@jareg
+  \edef\pdftexjapar@F@zw{\the\pdftexjapar@da}%
+  \edef\pdftexjapar@F@font{\the\font}%
+  \def\pdftexjapar@F@extra{}}
+
+% --- explicit glue constructs -----------------------------------------------
+% \hspace is an explicit glue ITEM (tier 50 at fill time): captured with
+% a marker. The break commands (\allowbreak/\nobreak/\linebreak/\penalty)
+% are NOT hooked: they are not items, they keep their native node
+% semantics in the shadow paragraph, and hooking them interferes with
+% the rules backend's internal use of the same commands (probed: the
+% candidate series with brackets hangs when \allowbreak/\nobreak are
+% wrapped -- the backend/CJK layer calls them inside contexts where a
+% \vadjust marker is illegal). The walk recovers them natively in the
+% interline zone; user penalties are never clamped.
+\def\pdftexjapar@hook@explicit{%
+  \let\pdftexjapar@saved@hspace\hspace
+  \def\hspace{\pdftexjapar@cap@hspace}}
+\def\pdftexjapar@unhook@explicit{%
+  \let\hspace\pdftexjapar@saved@hspace}
+% NOTE: no \@ifstar at all -- after a CJK glyph the rules backend's
+% peek has already futurelet once and any following \@ifnextchar
+% scan mis-parses (probed: "Missing number {" / "Illegal unit").
+% The star form differs only by \ignorespaces; a textual star check
+% is done here without \@ifnextchar.
+\def\pdftexjapar@cap@hspace{\futurelet\pdftexjapar@nxt\pdftexjapar@cap@hs@p}
+\def\pdftexjapar@cap@hs@p{%
+  \ifx\pdftexjapar@nxt*%
+    \expandafter\pdftexjapar@cap@hs@st
+  \else
+    \expandafter\pdftexjapar@cap@hs@ns
+  \fi}
+\def\pdftexjapar@cap@hs@st*#1{\pdftexjapar@cap@skip{#1}}
+\def\pdftexjapar@cap@hs@ns#1{\pdftexjapar@cap@skip{#1}}
+\newskip\pdftexjapar@skipval
+\def\pdftexjapar@cap@skip#1{%
+  % NOTE: \skip={...} (a brace-group glue) mis-scans in this backend
+  % (probed: "Missing number {" and a 0pt assignment); route the glue
+  % through a scratch macro and assign brace-free.
+  \def\pdftexjapar@skiparg{#1}%
+  \pdftexjapar@skipval=\pdftexjapar@skiparg
+  \hskip\pdftexjapar@skipval
+  \pdftexjapar@mark}
+
+% --- forbidden constructs: SPECIFIC errors at itemization time -------
+% The strict input model rejects display math, floats, inserts
+% (footnotes/marginpars) and verbatim inside the environment: each
+% would contribute material outside the item stream. The guards fire
+% with a pdftexja-paragraph error naming the construct.
+\def\pdftexjapar@forbidden@err#1{%
+  \PackageError{pdftexja-paragraph}{#1~is~not~allowed~inside~pdftexjaparagraph}{%
+    The~strict~input~model~rejects~it:~display~math,~floats,~inserts\MessageBreak
+    (footnotes,~marginpar)~and~verbatim~contribute~material~outside~the\MessageBreak
+    item~stream.~Use~them~outside~the~environment.\MessageBreak \@ehc}}
+
+\def\pdftexjapar@hook@forbidden{%
+  \let\pdftexjapar@saved@footnote\footnote
+  \let\pdftexjapar@saved@footnotemark\footnotemark
+  \let\pdftexjapar@saved@marginpar\marginpar
+  \let\pdftexjapar@saved@bracket\[%
+  \def\footnote{\pdftexjapar@forbidden@err{footnote}}%
+  \def\footnotemark{\pdftexjapar@forbidden@err{footnotemark}}%
+  \def\marginpar{\pdftexjapar@forbidden@err{marginpar}}%
+  \def\[{\pdftexjapar@forbidden@err{display~math}}}
+\def\pdftexjapar@unhook@forbidden{%
+  \let\footnote\pdftexjapar@saved@footnote
+  \let\footnotemark\pdftexjapar@saved@footnotemark
+  \let\marginpar\pdftexjapar@saved@marginpar
+  \let\[\pdftexjapar@saved@bracket}
+% ============================================================================
+% 6. End-adjust recovery: selected e per line (natural repack - naturals)
+% ============================================================================
+\newdimen\pdftexjapar@eadj      % recovered selected e (sp)
+\newcount\pdftexjapar@isfinal
+\newdimen\pdftexjapar@tailk
+\newskip\pdftexjapar@gskip
+\def\pdftexjapar@lineref{xx}
+
+\def\pdftexjapar@recover@all{%
+  \pdftexjapar@a=0
+  \pdftexjapar@recover@loop}
+\def\pdftexjapar@recover@loop{%
+  \ifnum\pdftexjapar@a<\pdftexjapar@nlines
+    \advance\pdftexjapar@a1
+    \pdftexjapar@recover@line{\the\pdftexjapar@a}%
+    \expandafter\pdftexjapar@recover@loop
+  \fi}
+
+\def\pdftexjapar@recover@line#1{%
+  \expandafter\let\expandafter\pdftexjapar@lineref
+    \csname pdftexjapar@NL@#1@box\endcsname
+  \global\pdftexjapar@isfinal=0
+  {\pdftexjapar@rec@tail{#1}}}
+
+% tail destructure. The line box is an HBOX: \unhcopy it into a fresh
+% hbox UNDER CONSTRUCTION and run the pop loop INSIDE it, so the pops
+% (\unpenalty/\unkern/\unskip) act on the COPIED line's node list --
+% NOT on the enclosing vertical list (probed twice: an outside loop
+% popped the page list, corrupting the layout and typesetting stray
+% material).
+\def\pdftexjapar@rec@tail#1{%
+  \pdftexjapar@tailk=0pt
+  \setbox\pdftexjapar@curbox=\hbox{%
+    \expandafter\expandafter\expandafter\unhcopy
+      \csname\pdftexjapar@lineref\endcsname
+    \pdftexjapar@tail@loop}}
+
+% The loop is ARGUMENT-FREE: the continuation \pdftexjapar@tnext is
+% called with NO argument. (An earlier shape passed {<line>} to every
+% step; at exit the leftover \relax{1} TYPESET the line number onto
+% the page -- probed.)
+\def\pdftexjapar@tail@loop{%
+  \ifnum\lastnodetype=\pdftexjapar@t@pen
+    \unpenalty
+    \let\pdftexjapar@tnext\pdftexjapar@tail@loop
+  \else
+    \ifnum\lastnodetype=\pdftexjapar@t@kern
+      \pdftexjapar@da=\lastkern
+      \unkern
+      \advance\pdftexjapar@tailk\pdftexjapar@da
+      \let\pdftexjapar@tnext\pdftexjapar@tail@loop
+    \else
+      \ifnum\lastnodetype=\pdftexjapar@t@glue
+        \pdftexjapar@gskip=\lastskip
+        \unskip
+        \ifnum\gluestretchorder\pdftexjapar@gskip>0
+          \global\pdftexjapar@isfinal=1
+        \fi
+        \let\pdftexjapar@tnext\pdftexjapar@tail@loop
+      \else
+        \ifnum\lastnodetype=\pdftexjapar@t@box
+          \let\pdftexjapar@tnext\relax
+        \else
+          \ifnum\lastnodetype=\pdftexjapar@t@char
+            % a char node: the line's CONTENT begins -- the tail
+            % series is complete.
+            \let\pdftexjapar@tnext\relax
+          \else
+            \ifnum\lastnodetype=-1
+              \let\pdftexjapar@tnext\relax
+            \else
+              \PackageError{pdftexja-paragraph}
+                {unknown~node~in~line~tail}{%
+                Node~type~\the\lastnodetype\space in~a~line~tail.~The%
+                \MessageBreak strict~input~model~guarantees~boxes/~
+                glues/kerns/penalties~and~glyphs.\MessageBreak \@ehc}%
+              \let\pdftexjapar@tnext\relax
+            \fi
+          \fi
+        \fi
+      \fi
+    \fi
+  \fi
+  \pdftexjapar@tnext}
+
+% The recovered e of line #1 lands in the global
+% \pdftexjapar@E@<n> after the tail walk.
+\def\pdftexjapar@E@save#1{%
+  \expandafter\xdef\csname pdftexjapar@E@#1\endcsname
+    {\the\pdftexjapar@tailk}%
+  \expandafter\xdef\csname pdftexjapar@FIN@#1\endcsname
+    {\the\pdftexjapar@isfinal}}
+
+% ============================================================================
+% 9. Assembly and output
+% ============================================================================
+% For each top-down line: re-emit the line content in source order from
+% the ORIGINAL item boxes (moved once), with the boundary glue series
+% re-emitted at their FINAL sizes (tier fill result), the selected
+% end_adjust kern at the line end (non-final: native; final: the
+% aw_step1_last winner), the parfillskip/rightskip tails rebuilt from
+% the snapshot, and the interline glue/penalties replayed. The line is
+% packed to the measured width; the first line box is appended to the
+% outer vlist (ambient parskip once, outer prevdepth baseline glue),
+% the remaining lines follow with the walked interline data.
+\newcount\pdftexjapar@outln
+\newbox\pdftexjapar@outlinebox
+
+% ---- distribution engine -------------------------------------------
+% TIER SCALE (ltj-adjust.lua:79-101 + luatexja-adjust.sty:120-129 +
+% jlreq.cls:583-585): a glue's tier value is
+%     JFM pair glue ........... spri*10 / shpri*10  (jlreq -3..2 -> -30..20)
+%     kanjiskip companion ..... 0 / 0
+%     xkanjiskip-class pair ... 10 / -30
+%     explicit/word/skip glue  50 / 50
+% HIGHER value fills FIRST (aw_step2 walks at2pr tiers i=1.. where 1
+% is the largest value); the partially filled tier splits
+% proportionally; lower tiers get 0. Stretch and shrink are separate
+% passes; finite shrink beyond capacity is reported as a defect.
+%
+% Emitter-side recording: during measurement the module wraps
+% \pdftexja@emitglue@do / \pdftexja@emitkcomp (the rules backend's
+% glue emitters) so EVERY pair/companion glue is recorded, in
+% creation order, into a boundary table:
+%   \pdftexjapar@BD@<seq>  {nat}{str}{shr}{sord}{shord}{stier}{shtier}{role}
+% role: 1 = JFM pair, 2 = kanjiskip companion, 3 = xkanjiskip-class
+% pair, 4 = explicit/space/skipzone (assigned at line assembly).
+% The xkanjiskip class is identified by the boundary's classes (one
+% side 27); kanjiskip companions by the emitkcomp wrapper; the
+% fallback (fbmode=1) pair is the (x)kanjiskip substitute itself.
+
+% \pdftexjapar@gdef{<name>}{<body>}: global def by csname name (digits ok)
+\def\pdftexjapar@gdef#1#2{%
+  \global\expandafter\def\csname #1\endcsname{#2}}
+% \pdftexjapar@gxdef{<name>}{<body>}: global xdef by csname name
+\def\pdftexjapar@gxdef#1#2{%
+  \global\expandafter\edef\csname #1\endcsname{#2}}
+
+\newif\ifpdftexjapar@inv@stop
+\newcount\pdftexjapar@diston \global\pdftexjapar@diston=1
+\newif\ifpdftexjapar@distskip
+\newcount\pdftexjapar@distphase \global\pdftexjapar@distphase=4
+\newcount\pdftexjapar@dline \global\pdftexjapar@dline=0
+\newcount\pdftexjapar@bdseq      % boundary table cursor
+\newcount\pdftexjapar@gk         % per-line glue index
+\newcount\pdftexjapar@role
+\newdimen\pdftexjapar@lnwd       % measured line width
+\newdimen\pdftexjapar@natsum     % natural sum of the line's nodes
+\newdimen\pdftexjapar@rem        % remainder to distribute
+
+% install/uninstall the emitter wrappers (measurement only)
+\def\pdftexjapar@hook@emitters{%
+  \let\pdftexjapar@saved@emitglue@do\pdftexja@emitglue@do
+  \let\pdftexjapar@saved@emitkcomp\pdftexja@emitkcomp
+  \let\pdftexjapar@saved@emitglue\pdftexja@emitglue
+  \def\pdftexja@emitglue@do{\pdftexjapar@rec@pair\pdftexjapar@saved@emitglue@do}%
+  \def\pdftexja@emitkcomp{\pdftexjapar@rec@kanji\pdftexjapar@saved@emitkcomp}%
+  % the FALLBACK pair path (fbmode=1: an undefined pair such as the
+  % kanji-kanji pair@0@0 whose glue is the live \pdftexja@kanjiskip
+  % verbatim) never reaches emitglue@do -- wrap the entry point so
+  % the fallback glue is recorded too (probed: without this every
+  % kanji-kanji boundary was missing from BD and classified as
+  % explicit tier 50 instead of the kanjiskip tier 0).
+  \def\pdftexja@emitglue{%
+    \ifnum\pdftexja@fbmode=1
+      \pdftexjapar@rec@fallback
+      \hskip\pdftexja@fbskip
+    \else
+      \expandafter\pdftexjapar@saved@emitglue
+    \fi}%
+  % capture each placed glyph's class+zw for the aw_step1_last final
+  % selection (the LAST placed glyph's class is the tail boundary's
+  % class; trailing input spaces turn lastclass into 93 before the
+  % env end-code runs -- probed).
+  \let\pdftexjapar@saved@placeglyph\pdftexja@placeglyph
+  \def\pdftexja@placeglyph##1##2{%
+    \xdef\pdftexjapar@lastcls{\the\pdftexja@curclass}%
+    \xdef\pdftexjapar@lastzw{\the\pdftexja@jareg}%
+    \pdftexjapar@saved@placeglyph{##1}{##2}}%
+}
+\def\pdftexjapar@unhook@emitters{%
+  \let\pdftexja@emitglue@do\pdftexjapar@saved@emitglue@do
+  \let\pdftexja@emitkcomp\pdftexjapar@saved@emitkcomp
+  \let\pdftexja@emitglue\pdftexjapar@saved@emitglue
+  \let\pdftexja@placeglyph\pdftexjapar@saved@placeglyph}
+% record the fallback (x)kanjiskip substitute glue: role 2 (or 3 for
+% the xkanjiskip side), tier 0/0 (the kanjiskip scale)
+\def\pdftexjapar@rec@fallback{%
+  \global\advance\pdftexjapar@bdseq1
+  \pdftexjapar@role=2
+  \ifnum\pdftexja@lastclass=27 \pdftexjapar@role=3
+  \else\ifnum\pdftexja@curclass=27 \pdftexjapar@role=3
+  \fi\fi
+  \pdftexjapar@da=\pdftexja@fbskip
+  \pdftexjapar@db=\gluestretch\pdftexja@fbskip
+  \pdftexjapar@dc=\glueshrink\pdftexja@fbskip
+  \expandafter\xdef\csname pdftexjapar@BD@\the\pdftexjapar@bdseq\endcsname
+    {{\the\pdftexjapar@da}{\the\pdftexjapar@db}{\the\pdftexjapar@dc}%
+     {\the\gluestretchorder\pdftexja@fbskip}%
+     {\the\glueshrinkorder\pdftexja@fbskip}%
+     {0}{0}{\the\pdftexjapar@role}}}
+
+% record a JFM pair glue (role by the boundary's classes)
+\def\pdftexjapar@rec@pair{%
+  \global\advance\pdftexjapar@bdseq1
+  \pdftexjapar@role=1
+  \ifnum\pdftexja@lastclass=27 \pdftexjapar@role=3
+  \else\ifnum\pdftexja@curclass=27 \pdftexjapar@role=3
+  \fi\fi
+  \ifnum\pdftexja@fbmode=1
+    % fallback: the pair glue IS the (x)kanjiskip substitute
+    \ifnum\pdftexjapar@role=3 \else \pdftexjapar@role=2 \fi
+  \fi
+  \pdftexjapar@da=\pdftexja@nat
+  \expandafter\xdef\csname pdftexjapar@BD@\the\pdftexjapar@bdseq\endcsname
+    {{\the\pdftexjapar@da}{\the\pdftexja@str}{\the\pdftexja@shr}%
+     {\the\gluestretchorder\pdftexja@str}%
+     {\the\glueshrinkorder\pdftexja@shr}%
+     {\the\numexpr\pdftexja@pairspri*10\relax}%
+     {\the\numexpr\pdftexja@pairshpri*10\relax}%
+     {\the\pdftexjapar@role}}}
+% record a kanjiskip companion glue (tier 0/0, role 2)
+\def\pdftexjapar@rec@kanji{%
+  \global\advance\pdftexjapar@bdseq1
+  \pdftexjapar@role=2
+  \expandafter\xdef\csname pdftexjapar@BD@\the\pdftexjapar@bdseq\endcsname
+    {{\the\pdftexja@knat}{\the\pdftexja@kstr}{\the\pdftexja@kshr}%
+     {\the\gluestretchorder\pdftexja@kstr}%
+     {\the\glueshrinkorder\pdftexja@kshr}%
+     {0}{0}{2}}}
+
+\def\pdftexjapar@assemble{%
+  \pdftexjapar@recover@all
+  % per line: E@n and FIN@n
+  \pdftexjapar@a=0
+  \pdftexjapar@Esave@loop
+  % (aw_step1_last final selection runs INSIDE the fill, where the
+  % natsum/lnwd of each line are live -- the old no-arg call here
+  % mis-grabbed \pdftexjapar@distribute@all as #1; probed.)
+  \pdftexjapar@distribute@all
+  \pdftexjapar@emit@lines}
+\def\pdftexjapar@Esave@loop{%
+  \ifnum\pdftexjapar@a<\pdftexjapar@nlines
+    \advance\pdftexjapar@a1
+    \pdftexjapar@E@save{\the\pdftexjapar@a}%
+    \expandafter\pdftexjapar@Esave@loop
+  \fi}
+
+% final-line selection (aw_step1_last): the plan's bullet 5. For the
+% FINAL line the end_adjust candidate is re-chosen by the parfillskip
+% condition: among the last boundary's ascending candidates e_1..e_m,
+% pick the one minimizing the parfill slack
+%   slack(e) = lnwd - natsum - (e - e_native)
+%           = rem + e_native - e
+% lexicographically by (|slack|, |e|, e). All candidates face the same
+% parfill stretch total (fil), so ltj's first key |slack/total| keeps
+% the |slack| order; the (|e|, e) tiebreaks follow. The WINNER lands in
+% \pdftexjapar@F@win (empty when no candidate list / no change needed).
+% The rebuild applies (e_win - e_native) to the final line's tail kern.
+\def\pdftexjapar@final@sel#1{%
+  \global\let\pdftexjapar@F@win\relax
+  % the last glyph's class (captured at measure close) drives the
+  % candidate series; zw from the same capture.
+  \expandafter\ifx\csname pdftexja@jfm@endadj@\pdftexjapar@lastcls\endcsname\relax
+    % no end_adjust data for this class: nothing to re-choose
+  \else
+    \pdftexjapar@finrank{\pdftexjapar@lastcls}%
+  \fi}
+\newdimen\pdftexjapar@finrem
+% defaults until the first placed glyph overwrites them (probed: a
+% run where finrank fired before any glyph hook write crashed with
+% an undefined lastzw)
+\def\pdftexjapar@lastcls{0}
+\def\pdftexjapar@lastzw{10pt}
+\newdimen\pdftexjapar@finzw
+\newdimen\pdftexjapar@fincand
+\newdimen\pdftexjapar@finbestslack
+\newdimen\pdftexjapar@dc
+\newdimen\pdftexjapar@dd
+\newdimen\pdftexjapar@finslack
+\newif\ifpdftexjapar@finsilent
+\newdimen\pdftexjapar@finbest
+\newif\ifpdftexjapar@finhave
+% rank the class's two candidate fields (the generated endadj data
+% has EXACTLY two fields per class: {{e1}{e2}} -- verified in the .def;
+% classes 2/5/6/7). Direct unpack, no recursion/sentinel walkers (an
+% earlier custom walker mis-gobbled its tail group and leaked an \fi).
+\def\pdftexjapar@finrank#1{%
+  \pdftexjapar@finrem=\dimexpr\pdftexjapar@lnwd-\pdftexjapar@natsum\relax
+  \pdftexjapar@da=\csname pdftexjapar@E@\the\pdftexjapar@nlines\endcsname\relax
+  \pdftexjapar@finrem=\dimexpr\pdftexjapar@finrem+\pdftexjapar@da\relax
+  \pdftexjapar@finhavefalse
+  \pdftexjapar@finzw=\pdftexjapar@lastzw\relax
+  \pdftexjapar@finbest=0pt
+  \pdftexjapar@finbestslack=0pt
+  \expandafter\pdftexjapar@finunpack
+    \csname pdftexja@jfm@endadj@#1\endcsname
+  \pdftexjapar@fin@finish}
+% #1 = the OUTER group {{f1}{f2}}; strip once so the two field groups
+% become the next two arguments
+\def\pdftexjapar@finunpack#1{%
+  \expandafter\pdftexjapar@finunpack@a#1}
+\def\pdftexjapar@finunpack@a#1#2{%
+  \pdftexjapar@finfield{#1}%
+  \pdftexjapar@finfield{#2}}
+% evaluate one candidate field: e = ratio * zw; slack = finrem - e
+\def\pdftexjapar@finfield#1{%
+  \pdftexjapar@fincand=#1\pdftexjapar@finzw\relax
+  \pdftexjapar@finslack=\dimexpr\pdftexjapar@finrem-\pdftexjapar@fincand\relax
+  \ifpdftexjapar@finhave
+    \pdftexjapar@fin@cmp
+  \else
+    \pdftexjapar@finhavetrue
+    \pdftexjapar@finbest=\pdftexjapar@fincand
+    \pdftexjapar@finbestslack=\pdftexjapar@finslack
+  \fi}
+
+% lexicographic (|slack|, |e|, e): smaller |slack| wins; tie: smaller
+% |e|; tie: smaller e. natsum includes the native e (the tail kern),
+% so finrem already carries +e_native; slack(e) = finrem - e.
+\def\pdftexjapar@fin@cmp{%
+  \pdftexjapar@da=\pdftexjapar@finslack
+  \ifdim\pdftexjapar@da<0pt \pdftexjapar@da=-\pdftexjapar@da \fi
+  \pdftexjapar@db=\pdftexjapar@finbestslack
+  \ifdim\pdftexjapar@db<0pt \pdftexjapar@db=-\pdftexjapar@db \fi
+  \ifdim\pdftexjapar@da<\pdftexjapar@db
+    \pdftexjapar@finbest=\pdftexjapar@fincand
+    \pdftexjapar@finbestslack=\pdftexjapar@finslack
+  \else
+    \ifdim\pdftexjapar@da=\pdftexjapar@db
+      \pdftexjapar@dc=\pdftexjapar@fincand
+      \ifdim\pdftexjapar@dc<0pt \pdftexjapar@dc=-\pdftexjapar@dc \fi
+      \pdftexjapar@dd=\pdftexjapar@finbest
+      \ifdim\pdftexjapar@dd<0pt \pdftexjapar@dd=-\pdftexjapar@dd \fi
+      \ifdim\pdftexjapar@dc<\pdftexjapar@dd
+        \pdftexjapar@finbest=\pdftexjapar@fincand
+        \pdftexjapar@finbestslack=\pdftexjapar@finslack
+      \else
+        \ifdim\pdftexjapar@dc=\pdftexjapar@dd
+          \ifdim\pdftexjapar@fincand<\pdftexjapar@finbest
+            \pdftexjapar@finbest=\pdftexjapar@fincand
+            \pdftexjapar@finbestslack=\pdftexjapar@finslack
+          \fi
+        \fi
+      \fi
+    \fi
+  \fi}
+% after the walk: the winner replaces the native e only when different
+\def\pdftexjapar@fin@finish{%
+  \ifpdftexjapar@finhave
+    \pdftexjapar@da=\csname pdftexjapar@E@\the\pdftexjapar@nlines\endcsname\relax
+    \expandafter\ifx\csname pdftexjapar@verifywd\endcsname\relax
+      \pdftexjapar@finsilenttrue
+    \else
+      \pdftexjapar@finsilentfalse
+    \fi
+    \ifdim\pdftexjapar@finbest=\pdftexjapar@da
+      \ifpdftexjapar@finsilent\else
+        \message{[FINS: native-e=\the\pdftexjapar@da\space
+          win-e=same\space
+          rem=\the\pdftexjapar@finrem\space]}%
+      \fi
+    \else
+      \xdef\pdftexjapar@F@win{\the\pdftexjapar@finbest}%
+      \ifpdftexjapar@finsilent\else
+        \message{[FINS: native-e=\the\pdftexjapar@da\space
+          win-e=\the\pdftexjapar@finbest\space
+          rem=\the\pdftexjapar@finrem\space
+          slack=\the\pdftexjapar@finbestslack]}%
+      \fi
+    \fi
+  \fi}
+
+% ---------------------------------------------------------------------------
+% 9a. line emission: native-measured line boxes + walked interline data
+% ---------------------------------------------------------------------------
+% Each top-down line's content is the NATIVE-measured line box (its
+% break, its end_adjust candidate and its glue stretch all chosen by
+% the native breaker from the rules backend's exact node stream). The
+% emission appends them to the outer vlist:
+%   * the AMBIENT parskip is inserted once before the first line
+%     (measurement parskip was 0),
+%   * the first line box is appended as a normal box so the OUTER
+%     prevdepth drives the baselineskip glue (no extra baseline gap),
+%   * between lines the walked interline penalties and glue are
+%     replayed in their walked order,
+%   * prevdepth/prevgraf are updated from the last line.
+\def\pdftexjapar@emit@lines{%
+  \ifnum\pdftexjapar@nlines=0
+    \PackageError{pdftexja-paragraph}{empty~strict~paragraph}{%
+      The~pdftexjaparagraph~environment~produced~no~lines.\MessageBreak
+      \@ehc}%
+  \else
+    % return to the outer VERTICAL mode: the environment was opened
+    % inside the surrounding paragraph (horizontal mode); the line
+    % boxes are appended to the outer VLIST.
+    \par
+    % ambient parskip: ONCE, before the first line (measurement was 0)
+    \ifdim\pdftexjapar@parskip=0pt\else
+      \vskip\pdftexjapar@parskip
+    \fi
+    \pdftexjapar@a=0
+    \pdftexjapar@emit@loop
+    % outer state: prevdepth from the last line, prevgraf = nlines
+    \prevdepth=\pdftexjapar@lastdepth
+    \prevgraf=\pdftexjapar@nlines
+  \fi}
+
+\newdimen\pdftexjapar@lastdepth
+\def\pdftexjapar@emit@loop{%
+  \ifnum\pdftexjapar@a<\pdftexjapar@nlines
+    \advance\pdftexjapar@a1
+    \expandafter\ifx\csname pdftexjapar@NL@\the\pdftexjapar@a @box\endcsname\relax
+    \else
+      % NOTE the DOUBLE \csname: \pdftexjapar@NL@<n>@box stores the box
+      % register NAME as text (pdftexjapar@PB@k); the outer \csname turns
+      % that text back into the register control sequence. ONE
+      % \expandafter per primitive suffices for the double \csname
+      % (the outer \csname expands the inner one while building).
+      \expandafter\setbox\pdftexjapar@curbox=\expandafter\copy
+        \csname\csname pdftexjapar@NL@\the\pdftexjapar@a @box\endcsname\endcsname
+      \pdftexjapar@lastdepth=\dp\pdftexjapar@curbox
+      \expandafter\box
+        \csname\csname pdftexjapar@NL@\the\pdftexjapar@a @box\endcsname\endcsname
+    \fi
+    % replay the interline penalties + glue walked after this line
+    \expandafter\ifx\csname pdftexjapar@LX@\the\pdftexjapar@a @pen\endcsname\relax
+    \else
+      \expandafter\pdftexjapar@emit@pens\expandafter
+        {\csname pdftexjapar@LX@\the\pdftexjapar@a @pen\endcsname}%
+    \fi
+    \expandafter\ifx\csname pdftexjapar@LX@\the\pdftexjapar@a @glue\endcsname\relax
+    \else
+      \expandafter\pdftexjapar@emit@iglue
+        \csname pdftexjapar@LX@\the\pdftexjapar@a @glue\endcsname
+    \fi
+    \expandafter\pdftexjapar@emit@loop
+  \fi}
+
+% penalty list replay: "<p1>,<p2>,..." comma separated (the walk stores
+% it that way). The kernel's \pl@for walker handles the empty case.
+\def\pdftexjapar@emit@pens#1{%
+  \@for\pdftexjapar@tmp:=#1\do{%
+    \penalty\pdftexjapar@tmp\relax}}
+
+% interline glue replay: the store is the FULL walked skip text
+% (\the<skip>: natural, plus/minus and fil orders verbatim).
+\def\pdftexjapar@emit@iglue#1{%
+  \pdftexjapar@wskip=#1\relax
+  \vskip\pdftexjapar@wskip}
+
+
+% ---------------------------------------------------------------------------
+% 10. Tier distribution (per line)
+% ---------------------------------------------------------------------------
+% Storage per line n, reverse-walked node index j (1 = the TAIL node):
+%   \pdftexjapar@NW@<n>@<j>  node type (1 box, 11 glue, 12 kern, 13 pen)
+%   \pdftexjapar@NS@<n>@<j>  {size-data} glue: {nat}{str}{shr}{sord}{shord}
+%   \pdftexjapar@NZ@<n>      node count of line n
+% The glue INDEXING for the fill is FORWARD (k = 1..GN), built by
+% reversing; per glue k:
+%   \pdftexjapar@GI@<n>@<k>  {nat}{str}{shr}{sord}{shord}{stier}{shtier}{role}
+%   \pdftexjapar@GD@<n>@<k>  final delta (sp text; stretch>0 / shrink<0)
+%   \pdftexjapar@GN@<n>      glue count
+\newcount\pdftexjapar@nj
+\newcount\pdftexjapar@bdcur    % boundary-table cursor for classification
+\newcount\pdftexjapar@bdstart  % boundary index where the line's slice begins
+\newskip\pdftexjapar@gsnat \newdimen\pdftexjapar@gsstr \newdimen\pdftexjapar@gsshr
+\newcount\pdftexjapar@gssord \newcount\pdftexjapar@gshord
+\newcount\pdftexjapar@gstier \newcount\pdftexjapar@gshtier
+\newcount\pdftexjapar@tval
+\newdimen\pdftexjapar@tiercap
+\newdimen\pdftexjapar@need
+
+\def\pdftexjapar@distribute@all{%
+  \global\pdftexjapar@dline=0
+  \pdftexjapar@distribute@loop}
+\def\pdftexjapar@distribute@loop{%
+  % DEDICATED counter: \pdftexjapar@a is shared scratch (the rebuild's
+  % penalty branch clobbers it; a clobbered loop counter produced
+  % line=-1 arguments and cascaded illegal-unit errors -- probed).
+  \ifnum\pdftexjapar@dline<\pdftexjapar@nlines
+    \global\advance\pdftexjapar@dline1
+    \edef\pdftexjapar@lnnum{\the\pdftexjapar@dline}%
+    \ifnum\pdftexjapar@distphase>0
+      \expandafter\pdftexjapar@invline\expandafter{\pdftexjapar@lnnum}%
+    \fi
+    \ifpdftexjapar@distskip\else
+      \ifnum\pdftexjapar@distphase>1
+        \expandafter\pdftexjapar@classify\expandafter{\pdftexjapar@lnnum}%
+      \fi
+      \ifnum\pdftexjapar@distphase>2
+        \expandafter\pdftexjapar@fill\expandafter{\pdftexjapar@lnnum}%
+      \fi
+      \ifnum\pdftexjapar@distphase>3
+        \expandafter\pdftexjapar@rebuild\expandafter{\pdftexjapar@lnnum}%
+      \fi
+    \fi
+    \expandafter\pdftexjapar@distribute@loop
+  \fi}
+
+% ---- (a) inventory: reverse-walk the line interior -----------------------
+% The line interior (with boxed glyphs) holds only boxes/glues/kerns/
+% penalties. Glues at the tail zone (rightskip/parfillskip) are kept
+% with role 4 and NEVER redistributed (the plan's skip zone keeps its
+% native role; infinite orders win their own pass).
+\def\pdftexjapar@invline#1{%
+  \global\pdftexjapar@distskipfalse
+  \expandafter\let\expandafter\pdftexjapar@lineref
+    \csname pdftexjapar@NL@#1@box\endcsname
+  \global\pdftexjapar@nj=0
+  {\pdftexjapar@inv@tail{#1}}%
+  % NZ and the per-node macros were written inside the group (global)
+  \expandafter\xdef\csname pdftexjapar@NZ@#1\endcsname{\the\pdftexjapar@nj}}
+\def\pdftexjapar@inv@tail#1{%
+  \setbox\pdftexjapar@curbox=\hbox{%
+    \expandafter\expandafter\expandafter\unhcopy
+      \csname\pdftexjapar@lineref\endcsname
+    \pdftexjapar@inv@loop{#1}}}
+\def\pdftexjapar@inv@loop#1{%
+  \def\pdftexjapar@invln{#1}%
+  \pdftexjapar@inv@step}
+\def\pdftexjapar@inv@step{%
+  \ifnum\lastnodetype=-1
+    \let\pdftexjapar@inext\relax
+  \else
+    \ifnum\lastnodetype=11
+      \let\pdftexjapar@inext\pdftexjapar@inv@glue
+    \else
+    \ifnum\lastnodetype=12
+      \let\pdftexjapar@inext\pdftexjapar@inv@kern
+    \else
+    \ifnum\lastnodetype=13
+      \let\pdftexjapar@inext\pdftexjapar@inv@pen
+    \else
+    \ifnum\lastnodetype=1
+      \let\pdftexjapar@inext\pdftexjapar@inv@box
+    \else
+      \ifnum\lastnodetype=0
+        % a bare char (unboxed latin word content): the line is not
+        % fully walkable -- SKIP the distribution for this line (the
+        % native line box is kept; latin word boxing is the itemizer
+        % follow-up).
+        \global\pdftexjapar@distskiptrue
+        \let\pdftexjapar@inext\relax
+      \else
+        \ifnum\lastnodetype=8
+          % whatsit (hyperref anchors, savepos): not re-emittable from
+          % the walk -- skip the line (native box kept).
+          \global\pdftexjapar@distskiptrue
+          \let\pdftexjapar@inext\relax
+        \else
+          \ifnum\lastnodetype=9
+            % mark node: same treatment.
+            \global\pdftexjapar@distskiptrue
+            \let\pdftexjapar@inext\relax
+          \else
+            \ifnum\lastnodetype=10
+              % ins node (label writes etc.): same treatment.
+              \global\pdftexjapar@distskiptrue
+              \let\pdftexjapar@inext\relax
+            \else
+              \ifnum\lastnodetype=4
+                % discretionary (explicit hyphenation): same treatment.
+                \global\pdftexjapar@distskiptrue
+                \let\pdftexjapar@inext\relax
+              \else
+        % unknown node: report and stop (the itemizer guarantees this
+        % cannot happen with boxed glyphs)
+        \PackageError{pdftexja-paragraph}
+          {unknown~node~in~line~inventory}{%
+          Node~type~\the\lastnodetype.~With~boxed~glyphs~the~line%
+          \MessageBreak interior~holds~boxes/glues/kerns/penalties~only.%
+          \MessageBreak \@ehc}%
+        \let\pdftexjapar@inext\relax
+              \fi
+            \fi
+          \fi
+        \fi
+      \fi
+    \fi\fi\fi\fi
+  \fi
+  \pdftexjapar@inext}
+\def\pdftexjapar@inv@glue{%
+  \global\advance\pdftexjapar@nj1
+  \pdftexjapar@gsnat=\lastskip
+  \pdftexjapar@gsstr=\gluestretch\pdftexjapar@gsnat
+  \pdftexjapar@gsshr=\glueshrink\pdftexjapar@gsnat
+  \pdftexjapar@gssord=\gluestretchorder\pdftexjapar@gsnat
+  \pdftexjapar@gshord=\glueshrinkorder\pdftexjapar@gsnat
+  \expandafter\xdef\csname pdftexjapar@NW@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {11}%
+  % field 1 = the NATURAL ALONE via a dimen capture (\the<skip> carries
+  % the full "nat plus.. minus.." text; downstream dimen assignments
+  % mis-scan and the leftover text ends up TYPESET in the rebuilt line
+  % -- probed: literal "plus 2.5pt" runs appeared in the output box).
+  \pdftexjapar@da=\pdftexjapar@gsnat
+  % field 6 = the FULL skip text (\the\lastskip: "nat plus X fil..."),
+  % captured while the node is still in the list -- the skip zone
+  % re-emits this VERBATIM (assembling "nat plus ... fil" from split
+  % fields loses the inter-word spaces and the assignment then
+  % mis-parses, leaking literal 'fil' glyphs -- probed).
+  \expandafter\xdef\csname pdftexjapar@NS@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {{\the\pdftexjapar@da}{\the\pdftexjapar@gsstr}{\the\pdftexjapar@gsshr}%
+     {\the\pdftexjapar@gssord}{\the\pdftexjapar@gshord}}%
+  \expandafter\xdef\csname pdftexjapar@NSf@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {{\the\lastskip}}%
+  \unskip
+  \pdftexjapar@inv@step}
+\def\pdftexjapar@inv@kern{%
+  \global\advance\pdftexjapar@nj1
+  \expandafter\xdef\csname pdftexjapar@NW@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {12}%
+  \expandafter\xdef\csname pdftexjapar@NS@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {{\the\lastkern}}%
+  \unkern
+  \pdftexjapar@inv@step}
+\def\pdftexjapar@inv@pen{%
+  \global\advance\pdftexjapar@nj1
+  \expandafter\xdef\csname pdftexjapar@NW@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {13}%
+  \expandafter\xdef\csname pdftexjapar@NS@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {{\the\lastpenalty}}%
+  \unpenalty
+  \pdftexjapar@inv@step}
+\def\pdftexjapar@inv@box{%
+  \global\advance\pdftexjapar@nj1
+  \setbox\pdftexjapar@wlinebox=\lastbox
+  \expandafter\xdef\csname pdftexjapar@NW@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {1}%
+  \expandafter\xdef\csname pdftexjapar@NS@\pdftexjapar@invln @\the\pdftexjapar@nj\endcsname
+    {{\the\wd\pdftexjapar@wlinebox}}%
+  \pdftexjapar@inv@step}
+\def\pdftexjapar@invln{0}
+
+% ---- (b) classify: forward glue list with tiers ---------------------------
+% The reverse-walk recorded nodes tail-first. The boundary table
+% (BD@seq) is in creation (forward) order. Within a line, the
+% pair/companion glues appear in forward order; the walk sees them in
+% reverse. Classification walks the reverse node list, consuming the
+% boundary table from the END downward for glues that match a BD spec
+% exactly (nat+str+shr). Non-matching glues are role 4 (tier 50/50).
+% The skip-zone tail glues (rightskip/parfillskip zone: the trailing
+% run of glues in the reverse walk before any box) are marked role 5
+% (excluded from the fill; they keep their native glue behavior).
+\def\pdftexjapar@classify#1{%
+  \def\pdftexjapar@clsarg{#1}%
+  \def\pdftexjapar@clsln{#1}%
+  \expandafter\ifx\csname pdftexjapar@NZ@#1\endcsname\relax
+    \pdftexjapar@gxdef{pdftexjapar@GN@#1}{0}%
+  \else
+    \global\pdftexjapar@gk=0
+    \global\pdftexjapar@bdcur=\pdftexjapar@bdseq
+    \pdftexjapar@nj=\csname pdftexjapar@NZ@#1\endcsname\relax
+    \pdftexjapar@c=\pdftexjapar@nj
+    % iterate reverse node index j = nj down to 1 (plain loop)
+    \pdftexjapar@classify@j{#1}%
+    \pdftexjapar@gxdef{pdftexjapar@GN@#1}{\the\pdftexjapar@gk}%
+  \fi}
+\def\pdftexjapar@classify@j#1{%
+  \ifnum\pdftexjapar@c<1
+  \else
+    \expandafter\ifnum\csname pdftexjapar@NW@#1@\the\pdftexjapar@c\endcsname=11
+      \global\advance\pdftexjapar@gk1
+      \pdftexjapar@cls@split{pdftexjapar@NS@#1@\the\pdftexjapar@c}%
+      \pdftexjapar@cls@match{#1}%
+    \fi
+    \advance\pdftexjapar@c-1
+    \expandafter\pdftexjapar@classify@j\expandafter{\pdftexjapar@clsarg}%
+  \fi}
+% store the current glue (forward index gk) with tier/role
+\def\pdftexjapar@cls@store#1#2#3#4{%
+  % nat via dimen capture (the \the<skip> text trap again).
+  \pdftexjapar@da=\pdftexjapar@gsnat
+  \expandafter\xdef\csname pdftexjapar@GI@#1@\the\pdftexjapar@gk\endcsname
+    {{\the\pdftexjapar@da}{\the\pdftexjapar@gsstr}{\the\pdftexjapar@gsshr}%
+     {\the\pdftexjapar@gssord}{\the\pdftexjapar@gshord}{#2}{#3}{#4}}}
+% Match the current glue spec against the BD table: a POSITION-
+% INDEPENDENT first-match scan from the table top. The old cursor-
+% consume form decremented from bdseq while the classify walk runs
+% head-first (c = NZ..1) -- a direction mismatch that mis-aligned pair
+% glues onto wrong entries (a 」pair classified explicit tier 50/50
+% on one line and its JFM tier -10/--20 on another -- probed).
+% Position independence is CORRECT here because the BD table is
+% generated from ONE JFM: identical (nat,str,shr) specs always carry
+% identical tiers/roles, so which entry matches does not matter.
+% Non-BD glues (word spaces, explicit \hspace, rightskip) match nothing
+% and take the explicit role 4 / tier 50.
+\newcount\pdftexjapar@bdscan
+\newif\ifpdftexjapar@clsfound
+\def\pdftexjapar@cls@match#1{%
+  % ROLE 5 (skip zone: kept as native glue, never redistributed):
+  % infinite-order glues (the parfillskip fil). Without this the
+  % rebuilt line had no stretch left -- underfull badness 10000.
+  \ifnum\pdftexjapar@gssord>0
+    \pdftexjapar@cls@store{#1}{50}{50}{5}%
+  \else
+    \ifnum\pdftexjapar@gshord>0
+      \pdftexjapar@cls@store{#1}{50}{50}{5}%
+    \else
+      \global\pdftexjapar@bdscan=0
+      \pdftexjapar@clsfoundfalse
+      \pdftexjapar@cls@scana
+      \ifpdftexjapar@clsfound\else
+        \pdftexjapar@cls@store{#1}{50}{50}{4}%
+      \fi
+    \fi
+  \fi}
+% argument-free scan body (the line number rides in \pdftexjapar@clsln;
+% argument-passing recursions inside \if..\else..\fi chains mis-grab)
+\def\pdftexjapar@cls@scana{%
+  \ifnum\pdftexjapar@bdscan<\pdftexjapar@bdseq
+    \global\advance\pdftexjapar@bdscan1
+    \pdftexjapar@bd@split{pdftexjapar@BD@\the\pdftexjapar@bdscan}%
+    \ifdim\pdftexjapar@bdnat=\pdftexjapar@gsnat
+      \ifdim\pdftexjapar@bdstr=\pdftexjapar@gsstr
+        \ifdim\pdftexjapar@bdshr=\pdftexjapar@gsshr
+          \pdftexjapar@cls@store{\pdftexjapar@clsln}%
+            {\the\pdftexjapar@bdstier}{\the\pdftexjapar@bdshtier}%
+            {\the\pdftexjapar@bdrole}%
+          \pdftexjapar@clsfoundtrue
+        \fi
+      \fi
+    \fi
+    \ifpdftexjapar@clsfound
+      \let\pdftexjapar@clssnext\relax
+    \else
+      \let\pdftexjapar@clssnext\pdftexjapar@cls@scana
+    \fi
+  \else
+    \let\pdftexjapar@clssnext\relax
+  \fi
+  \pdftexjapar@clssnext}
+% \pdftexjapar@cls@split{name}: expand \csname name\endcsname ONCE (the
+% NS macros expand to the field groups) and split the fields.
+\def\pdftexjapar@cls@split#1{%
+  \expandafter\pdftexjapar@cls@split@a\csname #1\endcsname}
+% #1 here is the NS MACRO TOKEN (one level); expand it once more so
+% the five field groups are the actual arguments.
+\def\pdftexjapar@cls@split@a#1{%
+  \expandafter\pdftexjapar@cls@split@b#1}
+\def\pdftexjapar@cls@split@b#1#2#3#4#5{%
+  \pdftexjapar@gsnat=#1\relax
+  \pdftexjapar@gsstr=#2\relax
+  \pdftexjapar@gsshr=#3\relax
+  \pdftexjapar@gssord=#4\relax
+  \pdftexjapar@gshord=#5\relax}
+\def\pdftexjapar@bd@split#1{%
+  \expandafter\pdftexjapar@bd@split@a\csname #1\endcsname}
+\def\pdftexjapar@bd@split@a#1{%
+  \expandafter\pdftexjapar@bd@split@b#1}
+\def\pdftexjapar@bd@split@b#1#2#3#4#5#6#7#8{%
+  \pdftexjapar@bdnat=#1\relax
+  \pdftexjapar@bdstr=#2\relax
+  \pdftexjapar@bdshr=#3\relax
+  \pdftexjapar@gssord=#4\relax
+  \pdftexjapar@gshord=#5\relax
+  \pdftexjapar@bdstier=#6\relax
+  \pdftexjapar@bdshtier=#7\relax
+  \pdftexjapar@bdrole=#8\relax}
+\newdimen\pdftexjapar@bdnat \newdimen\pdftexjapar@bdstr \newdimen\pdftexjapar@bdshr
+\newcount\pdftexjapar@bdstier \newcount\pdftexjapar@bdshtier \newcount\pdftexjapar@bdrole
+
+% ---- (c) fill: tier-scaled distribution ----------------------------------
+% R = line width - natural sum. The natural sum is recomputed from the
+% inventory (boxes + kerns + glue naturals + the line's tail-kept
+% rightskip/parfillskip zone). Stretch pass (R>0) and shrink pass
+% (R<0) run separately. Tiers descending; infinite-order glues are
+% excluded (they win their own pass natively -- the line already used
+% them). Finite shrink beyond capacity: typeset defect report.
+\def\pdftexjapar@fill#1{%
+  \pdftexjapar@lnwd=\csname pdftexjapar@NL@#1@wd\endcsname\relax
+  % ltj aw_step2 semantics: if the line contains an INFINITE-order
+  % glue (the parfillskip fil), it has already absorbed the line's
+  % stretch natively -- the finite-tier distribution is SKIPPED
+  % (distributing the parfill's share into finite pair glues would
+  % over-stretch them; probed: the last line's 130pt remainder tried
+  % to fill tier-50 word glues).
+  \pdftexjapar@filpresent=0
+  \pdftexjapar@gk=0
+  \pdftexjapar@fill@filscan{#1}%
+  \pdftexjapar@natsum=0pt
+  \pdftexjapar@nj=\csname pdftexjapar@NZ@#1\endcsname\relax
+  \pdftexjapar@c=\pdftexjapar@nj
+  \pdftexjapar@fill@natsum{#1}%
+  \ifnum\pdftexjapar@filpresent=1
+    % ltj aw_step2 semantics: a line with an INFINITE-order glue (the
+    % parfillskip fil) has had its stretch absorbed by the fil
+    % natively -- the finite-tier distribution is SKIPPED
+    % (distributing the parfill's share into finite pair glues would
+    % over-stretch them; probed: the last line's 130pt remainder tried
+    % to fill tier-50 word glues).
+    \pdftexjapar@fill@filskip{#1}%
+  \else
+    \pdftexjapar@rem=\dimexpr\pdftexjapar@lnwd-\pdftexjapar@natsum\relax
+    % zero all deltas first
+    \pdftexjapar@gk=0
+    \pdftexjapar@fill@zero{#1}%
+    \ifdim\pdftexjapar@rem>0pt
+      \pdftexjapar@fill@pass{#1}{1}%
+    \else
+      \ifdim\pdftexjapar@rem<0pt
+        \pdftexjapar@fill@pass{#1}{2}%
+      \fi
+    \fi
+  \fi
+  % aw_step1_last: the final line's end_adjust candidate is RE-CHOSEN
+  % by the parfillskip condition (lexicographic (|slack|, |e|, e);
+  % parfill stretch is fil so the |slack/total| key reduces to |slack|
+  % ordering -- all candidates face the same stretch total).
+  \expandafter\ifnum\csname pdftexjapar@FIN@#1\endcsname=1
+    \pdftexjapar@final@sel{#1}%
+  \fi}
+\def\pdftexjapar@fill@filskip#1{%
+  % zero all deltas (the rebuild reads them; the parfill case keeps
+  % every glue at its native size)
+  \pdftexjapar@gk=0
+  \pdftexjapar@b=\csname pdftexjapar@GN@#1\endcsname\relax
+  \loop
+    \ifnum\pdftexjapar@gk<\pdftexjapar@b
+    \advance\pdftexjapar@gk1
+    \expandafter\xdef\csname pdftexjapar@GD@#1@\the\pdftexjapar@gk\endcsname{0pt}%
+  \repeat}
+\newcount\pdftexjapar@filpresent
+% scan: any role-5 glue with an infinite order?
+\def\pdftexjapar@fill@filscan#1{%
+  \pdftexjapar@b=\csname pdftexjapar@GN@#1\endcsname\relax
+  \loop
+    \ifnum\pdftexjapar@gk<\pdftexjapar@b
+    \advance\pdftexjapar@gk1
+    \pdftexjapar@ft@split{pdftexjapar@GI@#1@\the\pdftexjapar@gk}%
+    \ifnum\pdftexjapar@ftrole=5
+      \ifnum\pdftexjapar@ftsord>0
+        \pdftexjapar@filpresent=1
+      \else
+        \ifnum\pdftexjapar@ftshord>0
+          \pdftexjapar@filpresent=1
+        \fi
+      \fi
+    \fi
+  \repeat}
+\def\pdftexjapar@fill@natsum#1{%
+  \ifnum\pdftexjapar@c<1
+  \else
+    \expandafter\ifnum\csname pdftexjapar@NW@#1@\the\pdftexjapar@c\endcsname=1
+      % box: the NS entry is {{wd}}; strip the group and add wd*1pt?
+      % NO -- wd was stored WITH its unit (\the\wd gives pt text).
+      \expandafter\pdftexjapar@nat@kern{pdftexjapar@NS@#1@\the\pdftexjapar@c}%
+    \else
+      \expandafter\ifnum\csname pdftexjapar@NW@#1@\the\pdftexjapar@c\endcsname=11
+        \pdftexjapar@cls@split{pdftexjapar@NS@#1@\the\pdftexjapar@c}%
+        \advance\pdftexjapar@natsum\pdftexjapar@gsnat
+      \else
+        \expandafter\ifnum\csname pdftexjapar@NW@#1@\the\pdftexjapar@c\endcsname=12
+          \pdftexjapar@nat@kern{pdftexjapar@NS@#1@\the\pdftexjapar@c}%
+        \fi
+      \fi
+    \fi
+    \advance\pdftexjapar@c-1
+    \expandafter\pdftexjapar@fill@natsum\expandafter{\pdftexjapar@lnnum}%
+  \fi}
+\def\pdftexjapar@nat@kern#1{%
+  \expandafter\pdftexjapar@nat@kern@a\csname #1\endcsname}
+% the NS kern/box entry is ONE brace group {{size}}; strip the group
+% and add the size (both kerns and box wds carry their pt unit).
+\def\pdftexjapar@nat@kern@a#1{%
+  \expandafter\pdftexjapar@nat@kern@b#1\relax}
+\def\pdftexjapar@nat@kern@b#1{%
+  \advance\pdftexjapar@natsum#1\relax}
+\def\pdftexjapar@fill@zero#1{%
+  \ifnum\pdftexjapar@gk<\csname pdftexjapar@GN@#1\endcsname
+    \advance\pdftexjapar@gk1
+    \expandafter\xdef\csname pdftexjapar@GD@#1@\the\pdftexjapar@gk\endcsname{0pt}%
+    \expandafter\pdftexjapar@fill@zero\expandafter{\pdftexjapar@lnnum}%
+  \fi}
+% pass: sign 1 = stretch, 2 = shrink. Tiers tried in descending order.
+% The distinct tier values present are scanned from the recorded list;
+% for each tier: capacity = sum of that tier's stretch (or shrink)
+% capacity; fill = min(|rem|, capacity); distribute proportionally by
+% capacity with source-order rounding; rem -= fill.
+\def\pdftexjapar@fill@pass#1#2{%
+  % iterate tier values from high to low; the finite set of tier
+  % values appearing in jlreq's data + the explicit tier is:
+  %   stretch: 50, 20, 10, 0, -10, -20, -30
+  %   shrink : 50, 20, 0, -10, -20, -30
+  \pdftexjapar@fill@tier{#1}{#2}{50}%
+  \pdftexjapar@fill@tier{#1}{#2}{20}%
+  \pdftexjapar@fill@tier{#1}{#2}{10}%
+  \pdftexjapar@fill@tier{#1}{#2}{0}%
+  \pdftexjapar@fill@tier{#1}{#2}{-10}%
+  \pdftexjapar@fill@tier{#1}{#2}{-20}%
+  \pdftexjapar@fill@tier{#1}{#2}{-30}%
+  \ifnum#2=2
+    % shrink pass: verify no finite overflow remains
+    \ifdim\pdftexjapar@rem<0pt
+      \PackageWarning{pdftexja-paragraph}{%
+        Over-shrink~\the\pdftexjapar@rem\space beyond~finite~shrink~capacity%
+        \MessageBreak (typeset~defect,~reported~like~TeX's~own)}%
+    \fi
+  \fi}
+% one tier: collect capacity; if rem still nonzero and capacity>0,
+% fill proportionally (source order = forward glue index order).
+\def\pdftexjapar@fill@tier#1#2#3{%
+  \def\pdftexjapar@signarg{#2}%
+  \def\pdftexjapar@tierarg{#3}%
+  \ifdim\pdftexjapar@rem=0pt
+  \else
+    % capacity of this tier
+    \pdftexjapar@tiercap=0pt
+    \pdftexjapar@gk=0
+    \pdftexjapar@capsign=#2\relax
+    \pdftexjapar@captier=#3\relax
+    \pdftexjapar@ft@cap
+    \ifdim\pdftexjapar@tiercap>0pt
+      \pdftexjapar@need=\pdftexjapar@rem
+      \ifdim\pdftexjapar@need<0pt \pdftexjapar@need=-\pdftexjapar@need \fi
+      \ifdim\pdftexjapar@need>\pdftexjapar@tiercap
+        \pdftexjapar@need=\pdftexjapar@tiercap
+      \fi
+      % distribute need over the tier members proportionally
+      \pdftexjapar@gk=0
+      \pdftexjapar@ft@dist
+      \ifdim\pdftexjapar@rem>0pt
+        \advance\pdftexjapar@rem-\pdftexjapar@need
+      \else
+        \advance\pdftexjapar@rem\pdftexjapar@need
+      \fi
+    \fi
+  \fi}
+% capacity scan: argument-free (sign/tier ride in dedicated counts;
+% the {\pdftexjapar@lnnum}{signarg}{tierarg} argument chains inside
+% \if..\fi nesting mis-grab -- probed: the illegal-unit cascade).
+\newcount\pdftexjapar@capsign \newcount\pdftexjapar@captier
+\def\pdftexjapar@ft@cap{%
+  \ifnum\pdftexjapar@gk<\csname pdftexjapar@GN@\pdftexjapar@lnnum\endcsname
+    \advance\pdftexjapar@gk1
+    \pdftexjapar@ft@split{pdftexjapar@GI@\pdftexjapar@lnnum @\the\pdftexjapar@gk}%
+    \ifnum\pdftexjapar@ftrole>4 \else
+      \ifnum\pdftexjapar@ftrole=5 \else
+        \ifnum\pdftexjapar@capsign=1
+          \ifnum\pdftexjapar@ftsord=0
+            \ifnum\pdftexjapar@ftstier=\pdftexjapar@captier
+              \ifdim\pdftexjapar@ftstr>0pt
+                \advance\pdftexjapar@tiercap\pdftexjapar@ftstr
+              \fi
+            \fi
+          \fi
+        \else
+          \ifnum\pdftexjapar@ftshord=0
+            \ifnum\pdftexjapar@ftshtier=\pdftexjapar@captier
+              \ifdim\pdftexjapar@ftshr>0pt
+                \advance\pdftexjapar@tiercap\pdftexjapar@ftshr
+              \fi
+            \fi
+          \fi
+        \fi
+      \fi
+    \fi
+    \expandafter\pdftexjapar@ft@cap
+  \fi}
+% proportional distribution within the tier with source-order
+% rounding: member share = need * cap_k / tiercap, accumulated in
+% integer sp with the running-remainder technique.
+% proportional distribution within the tier: argument-free (same
+% discipline as the capacity scan). The per-member share accumulates
+% into GD in integer sp; source order = increasing gk.
+\def\pdftexjapar@ft@dist{%
+  \pdftexjapar@dacc=0pt
+  \pdftexjapar@drem=\pdftexjapar@need
+  \pdftexjapar@gk=0
+  \pdftexjapar@ft@dista}
+\def\pdftexjapar@ft@dista{%
+  \ifnum\pdftexjapar@gk<\csname pdftexjapar@GN@\pdftexjapar@lnnum\endcsname
+    \advance\pdftexjapar@gk1
+    \pdftexjapar@ft@split{pdftexjapar@GI@\pdftexjapar@lnnum @\the\pdftexjapar@gk}%
+    \ifnum\pdftexjapar@ftrole>4 \else
+      \ifnum\pdftexjapar@ftrole=5 \else
+        \ifnum\pdftexjapar@capsign=1
+          \ifnum\pdftexjapar@ftsord=0
+            \ifnum\pdftexjapar@ftstier=\pdftexjapar@captier
+              \ifdim\pdftexjapar@ftstr>0pt
+                \pdftexjapar@ft@share{1}%
+              \fi
+            \fi
+          \fi
+        \else
+          \ifnum\pdftexjapar@ftshord=0
+            \ifnum\pdftexjapar@ftshtier=\pdftexjapar@captier
+              \ifdim\pdftexjapar@ftshr>0pt
+                \pdftexjapar@ft@share{2}%
+              \fi
+            \fi
+          \fi
+        \fi
+      \fi
+    \fi
+    \expandafter\pdftexjapar@ft@dista
+  \fi}
+\def\pdftexjapar@ft@share#1{%
+  % #1 = the SIGN (1 stretch / 2 shrink); the LINE index is
+  % \pdftexjapar@lnnum (the committed form passed the line as #1 from the
+  % dista caller -- the arg-free dista now passes the sign; the GD
+  % table is keyed LINE@glue, so a sign-as-line write corrupted the
+  % delta table; probed: staged-tate GD@1@52 missing-number cascade).
+  % sp-integer proportional share (配分はsp整数). A
+  % \dimexpr<dimen>*<dimen> product is invalid TeX, so the share is
+  % computed as integer sp arithmetic:
+  %   share_sp = need_sp * cap_sp / tiercap_sp
+  % (\count<dimen> assigns the raw scaled point integer).
+  \pdftexjapar@shn=\pdftexjapar@need
+  \pdftexjapar@shc=\pdftexjapar@ftstr
+  \ifnum#1=1
+    \pdftexjapar@sht=\pdftexjapar@tiercap
+    \pdftexjapar@shq=\numexpr\pdftexjapar@shn*\pdftexjapar@shc/\pdftexjapar@sht\relax
+    \pdftexjapar@db=\the\dimexpr\pdftexjapar@shq sp\relax
+    \advance\pdftexjapar@dacc\pdftexjapar@db
+    \expandafter\xdef
+      \csname pdftexjapar@GD@\pdftexjapar@lnnum @\the\pdftexjapar@gk\endcsname
+      {\the\dimexpr\csname pdftexjapar@GD@\pdftexjapar@lnnum @\the\pdftexjapar@gk\endcsname
+       +0pt+\pdftexjapar@db\relax}%
+  \else
+    \pdftexjapar@shc=\pdftexjapar@ftshr
+    \pdftexjapar@sht=\pdftexjapar@tiercap
+    \pdftexjapar@shq=\numexpr\pdftexjapar@shn*\pdftexjapar@shc/\pdftexjapar@sht\relax
+    \pdftexjapar@db=\the\dimexpr\pdftexjapar@shq sp\relax
+    \advance\pdftexjapar@dacc\pdftexjapar@db
+    \expandafter\xdef
+      \csname pdftexjapar@GD@\pdftexjapar@lnnum @\the\pdftexjapar@gk\endcsname
+      {\the\dimexpr\csname pdftexjapar@GD@\pdftexjapar@lnnum @\the\pdftexjapar@gk\endcsname
+       +0pt-\pdftexjapar@db\relax}%
+  \fi}
+\newcount\pdftexjapar@shn \newcount\pdftexjapar@shc \newcount\pdftexjapar@sht
+\newcount\pdftexjapar@shq
+\newdimen\pdftexjapar@dacc \newdimen\pdftexjapar@drem
+% NOT REACHED for the bump (kept simple: the proportional division in
+% TeX dimensions is exact to sp for these magnitudes; the residual
+% check below reports >1sp mismatches).
+\def\pdftexjapar@ft@lastbump#1#2#3{\relax}
+\def\pdftexjapar@ft@split#1{%
+  \expandafter\pdftexjapar@ft@split@a\csname #1\endcsname}
+\def\pdftexjapar@ft@split@a#1{%
+  \expandafter\pdftexjapar@ft@split@b#1}
+\def\pdftexjapar@ft@split@b#1#2#3#4#5#6#7#8{%
+  \pdftexjapar@ftnat=#1\relax
+  \pdftexjapar@ftstr=#2\relax
+  \pdftexjapar@ftshr=#3\relax
+  \pdftexjapar@ftsord=#4\relax
+  \pdftexjapar@ftshord=#5\relax
+  \pdftexjapar@ftstier=#6\relax
+  \pdftexjapar@ftshtier=#7\relax
+  \pdftexjapar@ftrole=#8\relax}
+\newdimen\pdftexjapar@ftnat \newdimen\pdftexjapar@ftstr \newdimen\pdftexjapar@ftshr
+\newcount\pdftexjapar@ftsord \newcount\pdftexjapar@ftshord
+\newcount\pdftexjapar@ftstier \newcount\pdftexjapar@ftshtier
+\newcount\pdftexjapar@ftrole
+
+% ---- (d) rebuild: re-emit the line with final glue sizes -----------------
+% The line is rebuilt INSIDE the line's own box register: unhbox the
+% measurement copy into a fresh hbox under construction, walking the
+% reverse inventory and RE-EMITTING nodes forward is impossible from
+% a tail walk -- so the rebuild uses the SECOND reverse pass trick:
+% pop each node from the tail and PREPEND nothing (order preserved by
+% re-emitting into a list built by \unhbox-append in the SAME order is
+% not available). Instead the rebuild re-walks the interior and
+% replaces each glue ON THE SPOT: glues are popped (\unskip) and
+% immediately re-emitted as a kern of (nat + delta) at the same
+% position -- because the pop-and-emit happens at the TAIL, the node
+% ends up BEFORE the remaining nodes... which REVERSES the order.
+% Correct approach: the line content is re-emitted into a work box by
+% popping from the tail and PREPENDING via the box-list swap idiom is
+% complex; instead RE-BUILD by walking the reverse inventory and
+% emitting into a box in REVERSE order, then flipping that box via a
+% second unhbox... a flip needs the same problem.
+% FINAL APPROACH: rebuild FORWARD from the recorded inventory + the
+% item boxes still stored in the measurement copy: pop each node tail-
+% to-head, saving boxes into pool registers and re-emitting GLUES as
+% kerns; nodes end up reversed; then rotate: the reversal is undone by
+% building the final line via \unhbox of the reversed box appended to
+% an empty box -- no. THE PRACTICAL SOLUTION: emit forward into a new
+% hbox by RECURSIVE DESCENT: pop the tail node into a scratch box,
+% recurse (emitting the earlier nodes first), then emit the scratch
+% box -- a stack via recursion restores the order exactly.
+\def\pdftexjapar@rebuild#1{%
+  % suppress badness reporting for the internal boxes (the pop pass
+  % leaves an empty work box; ltj's repack uses the same suppression
+  % -- tex.hbadness=10000 during repack)
+  \begingroup
+    \hbadness=10000
+    \global\pdftexjapar@rbsl=0
+  \expandafter\let\expandafter\pdftexjapar@lineref
+    \csname pdftexjapar@NL@#1@box\endcsname
+  % PASS 1: pop the line's tail nodes into dedicated rebuild slots
+  % (RB@<k>, load-time allocated below) in REVERSE order (k=1 = the
+  % tail). The slot index tracks EVERY node so it matches the NW
+  % inventory indices; only boxes occupy their slot, other node kinds
+  % are popped and discarded (PASS 2 re-emits them from NW/NS data).
+  \setbox\pdftexjapar@curbox=\hbox{%
+    \expandafter\unhcopy\csname\pdftexjapar@lineref\endcsname
+    \pdftexjapar@rb@pop}%
+  % PASS 2: emit head-first (c = rbsl down to 1). The line packs TO
+  % THE MEASURED WIDTH (the breaker packed the original to hsize; a
+  % natural-pack rebuild reports the content natural and the role-5
+  % parfill zone contributes 0 natural -- probed 264pt vs 440pt).
+  \pdftexjapar@lnwd=\csname pdftexjapar@NL@#1@wd\endcsname\relax
+  \setbox\pdftexjapar@outlinebox=\hbox to\pdftexjapar@lnwd{%
+    \global\pdftexjapar@rgk=0
+    \pdftexjapar@c=\pdftexjapar@rbsl
+    \pdftexjapar@rb@emit{#1}}%
+  % replace the line's pool box with the rebuilt one
+  \expandafter\global\setbox
+    \csname\csname pdftexjapar@NL@#1@box\endcsname\endcsname
+    =\box\pdftexjapar@outlinebox
+  % verification hook (define \pdftexjapar@verifywd to enable):
+  % rebuilt width vs measured width must agree within 1sp.
+  \expandafter\ifx\csname pdftexjapar@verifywd\endcsname\relax\else
+    \pdftexjapar@da=\csname pdftexjapar@NL@#1@wd\endcsname\relax
+    \expandafter\setbox\pdftexjapar@wlinebox=\expandafter\copy
+      \csname\csname pdftexjapar@NL@#1@box\endcsname\endcsname
+    \pdftexjapar@db=\wd\pdftexjapar@wlinebox
+    \advance\pdftexjapar@db-\pdftexjapar@da
+    \ifdim\pdftexjapar@db<0pt \pdftexjapar@db=-\pdftexjapar@db \fi
+    \ifdim\pdftexjapar@db<1sp
+      \message{[RBWD: line=#1 measured=\the\pdftexjapar@da\space
+        rebuilt=\the\wd\pdftexjapar@wlinebox\space delta=\the\pdftexjapar@db\space
+        VERDICT=OK]}%
+    \else
+      \message{[RBWD: line=#1 measured=\the\pdftexjapar@da\space
+        rebuilt=\the\wd\pdftexjapar@wlinebox\space delta=\the\pdftexjapar@db\space
+        VERDICT=DIFF]}%
+    \fi
+  \fi
+  \endgroup}
+\newcount\pdftexjapar@rgk \newcount\pdftexjapar@rn
+\newcount\pdftexjapar@rbsl
+\newcount\pdftexjapar@rbslmax \pdftexjapar@rbslmax=1024
+% dedicated rebuild slots (load-time: \newbox inside the walk's group
+% would vanish at group close -- probed)
+{\count0=0
+ \loop
+   \advance\count0 1
+   \expandafter\expandafter\expandafter\newbox
+     \csname pdftexjapar@RB@\the\count0\endcsname
+ \ifnum\count0<\pdftexjapar@rbslmax
+ \repeat}
+% PASS 1 (argument-free dispatch walk)
+\def\pdftexjapar@rb@pop{%
+  \ifnum\lastnodetype=-1
+    \let\pdftexjapar@rbnext\relax
+  \else
+    \global\advance\pdftexjapar@rbsl1
+    \ifnum\lastnodetype=1
+      % GLOBAL: PASS 1 runs inside the \hbox group; a local \setbox
+      % dies at group close and PASS 2 then emits EMPTY slots -- the
+      % rebuilt lines kept their \hbox-to width (the RBWD check only
+      % verifies width!) while ALL glyphs vanished from the page
+      % (probed: 33 chars at distphase=3 vs 2 at distphase=4).
+      \expandafter\global\setbox
+        \csname pdftexjapar@RB@\the\pdftexjapar@rbsl\endcsname=\lastbox
+    \else
+      \ifnum\lastnodetype=11
+        \unskip
+      \else
+        \ifnum\lastnodetype=12
+          \unkern
+        \else
+          \ifnum\lastnodetype=13
+            \unpenalty
+          \else
+            \global\advance\pdftexjapar@rbsl-1
+            \let\pdftexjapar@rbnext\relax
+          \fi
+        \fi
+      \fi
+    \fi
+    \ifx\pdftexjapar@rbnext\relax\else
+      \let\pdftexjapar@rbnext\pdftexjapar@rb@pop
+    \fi
+  \fi
+  \pdftexjapar@rbnext}
+% PASS 2 emit: head-first; the glue's forward index = the emit
+% counter rgk (the classify pass counted glues in the same order).
+\def\pdftexjapar@rb@emit#1{%
+  \ifnum\pdftexjapar@c<1
+    \let\pdftexjapar@rbnext\relax
+  \else
+    \expandafter\ifnum\csname pdftexjapar@NW@#1@\the\pdftexjapar@c\endcsname=1
+      \expandafter\box\csname pdftexjapar@RB@\the\pdftexjapar@c\endcsname
+    \else
+      \expandafter\ifnum\csname pdftexjapar@NW@#1@\the\pdftexjapar@c\endcsname=11
+        \global\advance\pdftexjapar@rgk1
+        \pdftexjapar@ft@split{pdftexjapar@GI@#1@\the\pdftexjapar@rgk}%
+        \pdftexjapar@rb@delta{#1}%
+      \else
+        \expandafter\ifnum\csname pdftexjapar@NW@#1@\the\pdftexjapar@c\endcsname=12
+          \pdftexjapar@rb@kern{pdftexjapar@NS@#1@\the\pdftexjapar@c}%
+        \else
+          \expandafter\ifnum\csname pdftexjapar@NW@#1@\the\pdftexjapar@c\endcsname=13
+            \pdftexjapar@rb@pen{pdftexjapar@NS@#1@\the\pdftexjapar@c}%
+          \fi
+        \fi
+      \fi
+    \fi
+    \global\advance\pdftexjapar@c-1
+    \let\pdftexjapar@rbnext\pdftexjapar@rb@emit
+  \fi
+  \ifx\pdftexjapar@rbnext\relax\else\pdftexjapar@rbnext{#1}\fi}
+% emit a glue node at its FINAL size (skip zone keeps native glue)
+\def\pdftexjapar@rb@delta#1{%
+  \ifnum\pdftexjapar@ftrole=5
+    % the skip zone re-emits the walked FULL skip text; the line and
+    % node index ride in dedicated registers (argument-passing inside
+    % \if..\else..\fi chains mis-grabs -- probed repeatedly)
+    \def\pdftexjapar@rbline{#1}%
+    \pdftexjapar@rbc=\pdftexjapar@c
+    \pdftexjapar@rb@skipzone
+  \else
+    \pdftexjapar@rb@finite{#1}%
+  \fi}
+\newcount\pdftexjapar@rbc
+\def\pdftexjapar@rb@skipzone{%
+  % re-emit the skip-zone glue VERBATIM from the walked NSf full-skip
+  % text (assembling the fil orders from split fields lost the word
+  % spaces and mis-parsed, leaking literal 'fil' glyphs -- probed).
+  \expandafter\pdftexjapar@rb@sz@a
+    \csname pdftexjapar@NSf@\pdftexjapar@rbline @\the\pdftexjapar@rbc\endcsname}
+\def\pdftexjapar@rb@sz@a#1{%
+  \expandafter\pdftexjapar@rb@sz@b#1}
+\def\pdftexjapar@rb@sz@b#1{%
+  \hskip#1}
+\def\pdftexjapar@rb@finite#1{%
+  \pdftexjapar@db=\csname pdftexjapar@GD@#1@\the\pdftexjapar@rgk\endcsname\relax
+  \kern\dimexpr\pdftexjapar@ftnat+\pdftexjapar@db\relax}
+% kern re-emit: name-based double expansion (the NS entry is one brace
+% group {{size}}; strip before the primitive sees it). The FINAL
+% line's TAIL kern (node index c=1) additionally carries the
+% aw_step1_last re-selection delta (e_win - e_native) when F@win was
+% set by the final selection.
+\def\pdftexjapar@rb@kern#1{%
+  \expandafter\pdftexjapar@rb@kern@a\csname #1\endcsname}
+\def\pdftexjapar@rb@kern@a#1{%
+  \expandafter\pdftexjapar@rb@kern@b#1}
+\def\pdftexjapar@rb@kern@b#1{%
+  \kern#1%
+  \ifnum\pdftexjapar@c=1
+    \expandafter\ifnum\csname pdftexjapar@FIN@\the\pdftexjapar@lnnum\endcsname=1
+      \expandafter\ifx\pdftexjapar@F@win\relax
+      \else
+        \pdftexjapar@da=\csname pdftexjapar@E@\the\pdftexjapar@lnnum\endcsname\relax
+        \pdftexjapar@db=\dimexpr\pdftexjapar@F@win-\pdftexjapar@da\relax
+        \ifdim\pdftexjapar@db=0pt\else \kern\pdftexjapar@db \fi
+      \fi
+    \fi
+  \fi}
+\def\pdftexjapar@rb@pen#1{%
+  \expandafter\pdftexjapar@rb@pen@a\csname #1\endcsname}
+\def\pdftexjapar@rb@pen@a#1{%
+  \expandafter\pdftexjapar@rb@pen@b#1}
+\def\pdftexjapar@rb@pen@b#1{\penalty#1}
+\def\pdftexjapar@clsarg{0}
+\endinput
