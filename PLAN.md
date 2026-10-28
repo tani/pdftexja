@@ -32,7 +32,7 @@
 | R7 | UTF-8 dispatcher が全滅 | `\　`(U+3000) で `unknown command spelling`。`和暦/西暦` は登録成功するが dispatch 不可。**調査で判明した4つの独立欠陥**（下記） | `tex/pdftexja-latex.sty` の登録と照合。①②③④を全て直さないと dispatch は成立しない |
 | R8 | 縦組で `\begin{math}…\end{math}` が失敗 | `File ended while scanning use of \pdftexja@math@scan`（yoko では通る） | `tex/pdftexja-math.sty` の `\pdftexja@imath@paren#1\)` が `\)` トークン区切り。`\begin{math}` は `\endmath` で閉じるため一致しない |
 | R11 | TDS/staged/uninstall の証跡が無い | `make tds` 未実行、repo 外 cwd での staged proof 未実行、uninstall sentinel 未実行 | 未実施（plan §10 Verification 4） |
-| R12 | `tests/run-pdftex-tests.sh`（jlreq consumer suite）が未移植 | 旧 backend 前提のまま（font build・旧 preflight） | jlreq 側 runner の再設計（plan §10） |
+| R12 | ~~`tests/run-pdftex-tests.sh` が未移植~~ → **完了（検証）**: 163 gates・`FAILED: 0` で稼働 |
 
 クラス（bundled classes）:
 
@@ -46,8 +46,8 @@ jlreq:
 
 | # | 症状 | 実測 | 原因の所在（帰属） |
 |---|---|---|---|
-| R9 | 縦組 jlreq が private state 参照で停止 | `\jlreqpdf@…` **107 箇所 / 20 ブロック**（units 624–664, savepos 757–887, para reset 1202–1208, UTF8 1494–1651, size 1762–1774, C* 1825–1851, warichu 4604–4870, warichu keys, TCY/jidori/akigumi 6997–7209, reference 7317–7477, insertion 7607–7645, ai-mark 3998–4061, index 6694–6745, math internal 6637–6640） | 旧 backend のアルゴリズム本体が class に残存（plan split §3 の除去対象） |
-| R10 | 旧 backend が現役 | `jlreq-pdftex{,-rules,-ruby,-paragraph}.sty` が install/TDS 対象に残る | 未削除（re-export shim は作らない） |
+| R9 | ~~縦組 jlreq が private state 参照で停止~~ → **失効（2026-10-28 検証）**: `grep -c "jlreqpdf@" jlreq.cls jlreq-*.sty` は全 0。private state 参照は公開 API（`\pdftexjaIfDirectionTF` 等）への置換で解消済み |
+| R10 | ~~旧 backend が現役~~ → **失効（検証）**: `jlreq-pdftex{,-rules,-ruby,-paragraph}.sty` は 4 本とも不在（`ls` で確認）。残るのは設計どおりの adapter `jlreq-pdftex.def` と JFM `.def` 12 本のみ | 完了 |
 | R15 | 分岐末尾の CJK グリフで**後続の**呼び出しの条件文が壊れる | **解決済み（2026-10-28）**: 機構は「peek の `\futurelet` が lookahead cs を呼び手の `\fi` の別名にして残す」こと。その cs が他モジュールと共有（`\pdftexja@next`）だと、後続マクロの**スキップされる枝**内に現れた `\pdftexja@next` を TeX の条件スキップ (`pass_over`) が `\fi` と解釈し、条件を1段早く閉じる（例: `\pdftexjaIfDirectionTF` の `\ifnum` 偽→真枝の `\let\pdftexja@next\@firstoftwo` が \fi と読まれ、両枝スキップ→呼び手の `\fi` が余る。素の TeX で `\let\x\fi` + `\ifnum 1=0 \let\x\relax\else\message{F}\fi` により最小化）。修正: lookahead cs を専用名へ分離 — `tex/pdftexja-rules.sty` は `\pdftexja@peek@next`、`tex/pdftexja-ruby.sty` は `\pdftexja@ruby@rpeek@next`。トークン列・ノード列は不変。fence 案（`\futurelet<cs>\A\B`）はストリームに1トークン足すため pdfjsbook/pdfjspf の行数と ruby の aftergroup 順序を動かすので撤回・再導入禁止（コード内コメントに記録）。検証: 最小再現 0 error、`\documentclass[direction=tate]{jlreq}` の `\today\today` 0 error、`run-tests.sh` 0 FAIL、`run-class-tests.sh` 12/12、jlreq 163 gates は **FAILED 3**（全て savepos=R16 の担当）で date-boundaries/coexist-date-boundaries と ruby 6 gates は PASS | `\iftrue\jlreq@iftdir{X}{\number\year 年}\fi` 2連の再現も解消。残るは R16 の savepos 3 件のみ |
 
 **R15 の機構（解決済み・実測で最小化）**: 症状は「分岐の最後が CJK グリフだと、次の `\if...` が壊れる」。最小再現は
@@ -62,7 +62,7 @@ false 枝の途中で TeX の条件スキップが「条件文の別名」を `\
 | R16 | 縦組の savepos 論理行位置が合わない（3 gates）→ **閉（jlreq.cls 側で修正済み，jlreq commit `460bf95`。`savepos-warichu` / `savepos-warichu-mag` / `savepos-marginpar` PASS）** | 原因は式ではなく述語の位置。pdfTeX 分岐の `\jlreq@calc@current@linewidth@onecolumn` は `\pdftexjaIfPageDirectionTF{tate}{+\topskip-\Cdp}{}` を `\dimexpr` の**中**に置いていた。この述語は `\let` と `\ifnum` を含む非可展開マクロで，`\dimexpr` の走査をそこで打ち切り（エラーは出ない），後続の第1行補正・`-\@totalleftmargin`・`-1truein` が無言で落ちる。実測の打ち切り値: ラベル未定義時 `25284sp`(0.3858pt)=`0-\hoffset-\oddsidemargin`，`X=8643162sp`(131.88pt) のとき `8668446sp`(132.27pt)=`X-\hoffset-\oddsidemargin`。**保存 X は回転ガリ―の行方向座標として正しい**: 行内で 1 文字ごとに +655360sp(10pt)，同一行の Y は不変，行頭 `X=4383322sp`(66.884pt)=`1in+oddsidemargin-(topskip-Cdp)`。よって Y（行直交方向）への写像は不要で，旧行の見立ては誤り。修正: 補正量を計測時（非展開文脈）に dimexpr 変数 `\jlreq@linewidth@firstline@shift` へ確定し，式はそれを加えるだけにした（yoko 文書と tate 内 yoko 論理ページは 0 で従来と同一）。加えて pdfTeX の `\warichu`/`\inlinenote` は pdftexja 側の私有 dimen しか更新せずクラスの `\jlreq@current@linewidth` が更新されなかった（ゲートはクラス側の値を読む）ため，クラスが `\NewCommandCopy` で別名化し同一測定点（初め括弧の前）でクラス計測を 1 回走らせるラッパを追加（aux id を 1 つ余分に消費，2 パスで安定） | **残差（ゲート外・記録のみ）**: 縦組の注列「行頭」が pdflatex 0 / uplatex 2zw で，脚注マーカ位置が 10pt 時 `16.00006pt`(pd) vs `39.99937pt`(up)（差 23.99931pt = 2.4zw，12pt では 4zw→48 に比例）。回転ガリ―内の脚注段落に縦組の字下げ・合印箱幅が乗らないため（別欠陥として切り出し）。傍注列そのものは `\linewidth+\marginparsep` で pd/up 完全一致（実測 200.0001pt）なので，ゲートは「傍注列位置（0.1pt）＋脚注マーカが注列先頭セル内」を判定し，生 savepos のエンジン間比較（184.00005 vs 160.0007pt，枠組みが異なる）は廃止した |
 | R17 | 縦組数式の和文↔数式境界グルーが 0 → **閉（`\pdftexja@emitpair@xspc` の極性反転。commit `6254223`）** | `pdflatex-tate-math` の BOUND-A/B: `\hbox{漢$x$}` が 10.0+5.715=15.715pt（境界グルー無し）。原因は xspacing 許可の判定で，`\pdftexja@ifxsp` が「許可」で 1 を返すのに呼び出し側が `\ifnum\pdftexja@xspval=\z@` で**許可時に抑制**していた。`=\@ne` に直し 18.215pt（+0.25zw）を実測。foundation 0 FAIL・class parity 12/12・jlreq は 6→5 FAIL | 解決済み。R6 の `\pdftexjaSetCharSpacing` 幅反転も同根 |
 | R14 | 縦組の**位置**ゲートが無い | 縦組は text 一致・グリフ被覆・クラス版面値で検証しているが、列位置の比較は未実装。実測: jtbook page1 の x クラスタ間隔は 15.4/16.9pt の実列間に 1.1–2.0pt のサブセル分割が混在し、単純な「最頻値/中央値」はどちらも artefact になる | 必要作業: pdftexja の回転ガリ―を文書座標系へ戻す写像を比較器に実装し、その上で列ピッチを 0.05pt で比較する（閾値ではなく計測基盤の追加） |
-| R13 | crop transport が委譲していない | `jlreq-trimmarks.sty` / `jlreq-trimmarks-pdftex.def` が自前で stock/`\pdfpageattr`/回転を実装 | `\pdftexjaSetCropStock/SetCropDrawing/SetPageAttributes/ClockwiseBox` へ委譲すべき（plan §7.2） |
+| R13 | ~~crop transport が委譲していない~~ → **ほぼ閉（検証）**: `jlreq-trimmarks-pdftex.def` は `\pdftexjaSetCropStock` / `\pdftexjaSetCropDrawing` / `\pdftexjaSetPageAttributes` / `\pdftexjaClockwiseBox`（実使用 line 69）へ委譲し、`\pdfpageattr` の直書きは 0 |
 
 ### R7 の内訳（実測で特定済み・修正は次段）
 
