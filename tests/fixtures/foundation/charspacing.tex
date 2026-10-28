@@ -1,0 +1,11 @@
+% \pdftexjaSetCharSpacing contract: preamble-only, HEX-validated,
+% group-local, and asymmetric (pre = Latin->JA, post = JA->Latin).
+% The widths are reported as CSP:<mode>:AJA and CSP:<mode>:JAA so the
+% runner can compare them without a PDF.
+\documentclass{article}
+\usepackage[jfm=pdftexja-jfm-ujis.def]{pdftexja}
+\pdftexjaSetCharSpacing{6F22}{none}
+\begin{document}
+\setbox0\hbox{A漢}\typeout{CSP:none:AJA=\the\wd0}
+\setbox0\hbox{漢A}\typeout{CSP:none:JAA=\the\wd0}
+\end{document}

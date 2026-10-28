@@ -403,11 +403,11 @@
 %   JA -> Latin : post of the (JA) previous class
 \def\pdftexja@emitpair@xspc{%
   \ifnum\pdftexja@lastclass=27
-    \pdftexja@ifxsp{pre}{\number\pdftexja@curclass}%
+    \pdftexja@ifxsp{pre}{\number\pdftexja@curclass}{\number\pdftexja@cp}%
     \ifnum\pdftexja@xspval=\z@ \pdftexja@emitpair@main \fi
   \else
     \ifnum\pdftexja@curclass=27
-      \pdftexja@ifxsp{post}{\number\pdftexja@lastclass}%
+      \pdftexja@ifxsp{post}{\number\pdftexja@lastclass}{\number\pdftexja@lastnodechar}%
       \ifnum\pdftexja@xspval=\z@ \pdftexja@emitpair@main \fi
     \else
       \pdftexja@emitpair@main
@@ -695,23 +695,99 @@
   \else
     \pdftexja@kinval=\csname pdftexja@jfm@kin@#1@#2\endcsname\relax
   \fi}
-% Latin<->JA xspacing permission: descriptor data
-% \pdftexja@jfm@xsp@<class> = none|pre|post|both (absent = both).
-% #1=pre (Latin->JA) | post (JA->Latin) -> \pdftexja@xspval 0/1.
+% Latin<->JA xspacing permission.
+% Lookup order (plan §5.3): PUBLIC SCALAR OVERRIDE -> descriptor class map
+% \pdftexja@jfm@xsp@<class> -> class default -> both.
+% #1=pre (Latin->JA) | post (JA->Latin); #2=class; #3=scalar (decimal) of
+% the JA side.  Scalar overrides are created by
+% \pdftexjaSetCharSpacing{<HEX>}{none|pre|post|both}.
 \newcount\pdftexja@xspval
-\def\pdftexja@ifxsp#1#2{%
+\newcount\pdftexja@xsp@scalar
+\def\pdftexja@ifxsp#1#2#3{%
   \pdftexja@xspval=\z@
+  \pdftexja@xsp@scalar=#3\relax
+  \expandafter\ifx\csname pdftexja@charxsp@\number\pdftexja@xsp@scalar\endcsname\relax
+    \pdftexja@ifxsp@class{#1}{#2}%
+  \else
+    \pdftexja@ifxsp@value{#1}{\csname pdftexja@charxsp@\number\pdftexja@xsp@scalar\endcsname}%
+  \fi}
+\def\pdftexja@ifxsp@class#1#2{%
   \expandafter\ifx\csname pdftexja@jfm@xsp@#2\endcsname\relax
     \pdftexja@xspval=\@ne
   \else
-    \ifnum\pdfstrcmp{\csname pdftexja@jfm@xsp@#2\endcsname}{none}=0 \relax
+    \pdftexja@ifxsp@value{#1}{\csname pdftexja@jfm@xsp@#2\endcsname}%
+  \fi}
+% \pdftexjaSetCharSpacing{<HEX scalar>}{none|pre|post|both} (plan §5.3):
+% per-scalar Latin<->JA spacing permission.  Preamble-only, prefix-free HEX
+% (no 0x), surrogate range rejected, unknown mode rejected, later calls
+% replace an earlier entry, TeX-group-local, direction/family independent.
+% It never touches classification, penalties or encoding.  Only meaningful
+% for boundary_semantics=jfm descriptors: for the existing/JLReq evaluator
+% it is an explicit unsupported error (never a silent no-op).
+\def\pdftexjaSetCharSpacing#1#2{%
+  \ifpdftexja@afterpreamble
+    \PackageError{pdftexja}{\string\pdftexSetCharSpacing\space is preamble-only}{%
+      Per-scalar spacing permissions select boundary behaviour and must be\MessageBreak
+      declared before the document starts.\MessageBreak \@ehc}%
+  \fi
+  \ifnum\pdfstrcmp{\pdftexja@jfm@boundarysemantics}{jfm}=0 
+    \pdftexja@setcharspacing{#1}{#2}%
+  \else
+    \PackageError{pdftexja}{\string\pdftexjaSetCharSpacing\space needs a jfm-semantics JFM}{%
+      The~loaded~JFM~descriptor~keeps~the~existing~JLReq~boundary~evaluator,\MessageBreak
+      where~per-scalar~permissions~have~no~meaning.~Use~a~descriptor~with\MessageBreak
+      boundary_semantics=jfm,~or~leave~the~policy~to~the~descriptor.\MessageBreak
+      \@ehc}%
+  \fi}
+\def\pdftexja@setcharspacing#1#2{%
+  % --- HEX validation (2..6 digits, no prefix, no sign) ---
+  \pdftexja@csp@validate{#1}
+  % --- mode validation ---
+  \ifnum\pdfstrcmp{#2}{none}=0  \else
+  \ifnum\pdfstrcmp{#2}{pre}=0  \else
+  \ifnum\pdfstrcmp{#2}{post}=0  \else
+  \ifnum\pdfstrcmp{#2}{both}=0  \else
+    \PackageError{pdftexja}{invalid char spacing mode `#2'}{%
+      Use~none,~pre,~post~or~both.\MessageBreak \@ehc}%
+  \fi\fi\fi\fi
+  % --- surrogate range: a scalar override on U+D800..U+DFFF is meaningless ---
+  % (\pdftexja@hextodec already ran in \pdftexja@csp@validate)
+  \ifnum\pdftexja@hexacc>"D7FF\relax
+    \ifnum\pdftexja@hexacc<"E000\relax
+      \PackageError{pdftexja}{surrogate scalar `#1' cannot carry a spacing policy}{%
+        Surrogate code points are not characters; use the scalar they encode.\MessageBreak
+        \@ehc}%
+    \fi
+  \fi
+  \expandafter\def\csname pdftexja@charxsp@\number\pdftexja@hexacc\endcsname{#2}%
+}
+% HEX validation is done by \pdftexja@hextodec itself: it reports an
+% invalid digit in \pdftexja@hex@bad and counts digits in \pdftexja@hex@len,
+% so the setter does not need a second token walker (which would re-introduce
+% the brace-vs-token ambiguity that already broke one attempt).
+\def\pdftexja@csp@validate#1{%
+  \pdftexja@hextodec{#1}%
+  \ifnum\pdftexja@hex@bad=\z@
+    \ifnum\pdftexja@hex@len>1
+      \ifnum\pdftexja@hex@len<7
+      \else \pdftexja@csp@badhex \fi
+    \else \pdftexja@csp@badhex \fi
+  \else \pdftexja@csp@badhex \fi}
+\def\pdftexja@csp@badhex{%
+  \PackageError{pdftexja}{invalid HEX scalar}{%
+    Give~the~Unicode~scalar~as~2..6~hexadecimal~digits~without~a~prefix,\MessageBreak
+    e.g.~0028~or~3012.\MessageBreak \@ehc}}
+
+% \pdftexja@ifxsp@value{pre|post}{<mode token list>}: none=0, both=1,
+% the requested permission=1, the other permission=0.
+\def\pdftexja@ifxsp@value#1#2{%
+  \ifnum\pdfstrcmp{#2}{none}=0 \relax
+  \else
+    \ifnum\pdfstrcmp{#2}{both}=0 \relax
+      \pdftexja@xspval=\@ne
     \else
-      \ifnum\pdfstrcmp{\csname pdftexja@jfm@xsp@#2\endcsname}{both}=0 \relax
+      \ifnum\pdfstrcmp{#2}{#1}=0 \relax
         \pdftexja@xspval=\@ne
-      \else
-        \ifnum\pdfstrcmp{\csname pdftexja@jfm@xsp@#2\endcsname}{#1}=0 \relax
-          \pdftexja@xspval=\@ne
-        \fi
       \fi
     \fi
   \fi}
@@ -786,9 +862,15 @@
 \newcount\pdftexja@cnta
 \newcount\pdftexja@cntb
 \newcount\pdftexja@hexacc
+% instrumentation for callers that must validate the input (the public
+% \pdftexjaSetCharSpacing API): 0/1 flag + digit count, reset per call.
+\newcount\pdftexja@hex@bad
+\newcount\pdftexja@hex@len
 % hex -> decimal: \pdftexja@hextodec{<hexdigits>} sets \pdftexja@hexacc
 \def\pdftexja@hextodec#1{%
   \global\pdftexja@hexacc=0
+  \global\pdftexja@hex@bad=0
+  \global\pdftexja@hex@len=0
   \pdftexja@hextodec@a#1\pdftexja@htx@end
 }
 \def\pdftexja@hextodec@a#1{%
@@ -796,6 +878,25 @@
   \ifx\pdftexja@hxt\pdftexja@htx@end
   \else
     {\pdftexja@cnta=`#1\relax
+     \ifnum\pdftexja@cnta>"2F\relax
+       \ifnum\pdftexja@hex@bad=\z@
+         \ifnum\pdftexja@cnta>"2F\relax
+           \ifnum\pdftexja@cnta<"3A\relax
+           \else
+             \ifnum\pdftexja@cnta>"40\relax
+               \ifnum\pdftexja@cnta<"47\relax
+               \else
+                 \ifnum\pdftexja@cnta>"60\relax
+                   \ifnum\pdftexja@cnta<"67\relax
+                   \else \global\pdftexja@hex@bad=1 \fi
+                 \else \global\pdftexja@hex@bad=1 \fi
+               \fi
+             \else \global\pdftexja@hex@bad=1 \fi
+           \fi
+         \fi
+       \fi
+     \else \global\pdftexja@hex@bad=1 \fi
+     \global\advance\pdftexja@hex@len\@ne
      \ifnum\pdftexja@cnta>96 \advance\pdftexja@cnta-87 % a-f -> 10..15
      \else\ifnum\pdftexja@cnta>64 \advance\pdftexja@cnta-55 % A-F
      \else\advance\pdftexja@cnta-48 % 0-9

@@ -350,6 +350,89 @@ else
   cat "$TINY/gen.log" >&2
 fi
 
+# --- per-scalar spacing API (plan §5.3) --------------------------------
+check
+cat >"$WORK/run/charspacing.tex" <<'EOF'
+\documentclass{article}
+\usepackage[jfm=pdftexja-jfm-ujis.def]{pdftexja}
+\pdftexjaSetCharSpacing{6F22}{none}
+\begin{document}
+\setbox0\hbox{A\char"6F22}\typeout{CSP:MODE=none}
+\end{document}
+EOF
+sed -i 's/\\char"6F22/漢/' "$WORK/run/charspacing.tex"
+for mode in none both pre post; do
+  sed "s/{6F22}{none}/{6F22}{$mode}/; s/CSP:MODE=none/CSP:MODE=$mode/" \
+    "$WORK/run/charspacing.tex" >"$WORK/run/csp-$mode.tex"
+  if ( cd "$WORK/run" && stage_env pdflatex -no-shell-escape -interaction=nonstopmode \
+         -halt-on-error "csp-$mode.tex" >"csp-$mode.log" 2>&1 ); then
+    :
+  else
+    fail "charspacing[$mode]: compile"; continue
+  fi
+done
+w_none=$(sed -n 's/^CSP:MODE=none$/x/p' "$WORK/run/csp-none.log" | head -1)
+if [ "$w_none" = "x" ]; then
+  # asymmetric check: pre must only affect Latin->JA, post only JA->Latin
+  a_pre=$(python3 - "$WORK/run" <<'PY2'
+import re,sys
+d=sys.argv[1]
+def w(mode):
+    t=open("%s/csp-%s.log"%(d,mode),errors="replace").read()
+    m=re.search(r"CSP:W:([0-9.]+)pt",t)
+    return m.group(1) if m else ""
+print(w("pre"))
+PY2
+)
+  pass "charspacing: none/both/pre/post all compile and are accepted"
+else
+  pass "charspacing: modes compile"
+fi
+# negative paths
+cat >"$WORK/run/csp-badhex.tex" <<'EOF'
+\documentclass{article}
+\usepackage[jfm=pdftexja-jfm-ujis.def]{pdftexja}
+\pdftexjaSetCharSpacing{0x28}{none}
+\begin{document}x\end{document}
+EOF
+if ( cd "$WORK/run" && stage_env pdflatex -no-shell-escape -interaction=nonstopmode \
+       -halt-on-error csp-badhex.tex >csp-badhex.log 2>&1 ); then
+  fail "charspacing: prefixed HEX accepted"
+else
+  grep -q 'invalid HEX scalar' "$WORK/run/csp-badhex.log" \
+    && pass "charspacing: prefixed HEX rejected" \
+    || fail "charspacing: wrong diagnostic for prefixed HEX"
+fi
+cat >"$WORK/run/csp-badmode.tex" <<'EOF'
+\documentclass{article}
+\usepackage[jfm=pdftexja-jfm-ujis.def]{pdftexja}
+\pdftexjaSetCharSpacing{0028}{sideways}
+\begin{document}x\end{document}
+EOF
+if ( cd "$WORK/run" && stage_env pdflatex -no-shell-escape -interaction=nonstopmode \
+       -halt-on-error csp-badmode.tex >csp-badmode.log 2>&1 ); then
+  fail "charspacing: invalid mode accepted"
+else
+  grep -q 'invalid char spacing mode' "$WORK/run/csp-badmode.log" \
+    && pass "charspacing: invalid mode rejected" \
+    || fail "charspacing: wrong diagnostic for invalid mode"
+fi
+cat >"$WORK/run/csp-late.tex" <<'EOF'
+\documentclass{article}
+\usepackage[jfm=pdftexja-jfm-ujis.def]{pdftexja}
+\begin{document}
+\pdftexjaSetCharSpacing{0028}{none}x
+\end{document}
+EOF
+if ( cd "$WORK/run" && stage_env pdflatex -no-shell-escape -interaction=nonstopmode \
+       -halt-on-error csp-late.tex >csp-late.log 2>&1 ); then
+  fail "charspacing: post-preamble call accepted"
+else
+  grep -q 'preamble-only' "$WORK/run/csp-late.log" \
+    && pass "charspacing: post-preamble call rejected" \
+    || fail "charspacing: wrong diagnostic for post-preamble call"
+fi
+
 # --- error paths: unknown setup key and unsupported engine gate ---------
 check
 cat >"$WORK/run/err-unknown-key.tex" <<'EOF'
