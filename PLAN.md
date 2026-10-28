@@ -19,25 +19,38 @@
 
 ---
 
-## 1. 欠陥一覧（すべて実測済み・出典付き）
+## 1. 欠陥一覧（すべて本セッションの実測・file:line 付き・原因帰属済み）
 
-| # | 症状 | 実測 | 所有 |
+基盤（foundation）:
+
+| # | 症状 | 実測 | 原因の所在（帰属） |
 |---|---|---|---|
-| R1 | `pdfjskiyou` 本文が 1 セル広い | ours 24–25 セル/行, ref 23–24。line 8 は 17 vs 22、純全角 CJK。`\textwidth` は両側 486.21144pt で一致 | class (kiyou) |
-| R2 | `pdfjltxdoc` page1 line6 が 33 vs 30 | 純 CJK 行、face 差では消えない（ipaex 同一 face 追試済み） | class (ltxdoc) |
-| R3 | `pdfjtbook` 第1ページ列ピッチ 16.90 vs 15.40 | 縦組 book の章見出し/タイトル材でクラスタ集合が変わる | class (tate book) |
-| R4 | 縦組ページのテキスト抽出が空 | `standalone-tate` の pdftotext 3 assertion が FAIL（compile と glyph は正常） | foundation (direction/paper) |
-| R5 | 独自 preset で `\begin{document}` の数値走査エラー | tiny preset（role 17/34/83/201/202）で `Missing number <to be read again> =` | foundation (rules/direction) |
-| R6 | `\pdftexjaSetCharSpacing` 未実装 | JS の `！〒+%`、doc の `\ "` が警告付き no-op | foundation (rules) |
-| R7 | UTF-8 コマンド dispatcher が全滅 | `\　`（U+3000）で `unknown command spelling`。`和暦/西暦` は登録できても dispatch 不可 | foundation (latex) |
-| R8 | 縦組で `\begin{math}…\end{math}` が失敗 | `File ended while scanning use of \pdftexja@math@scan`（`\endmath` が `\)` 区切りに一致しない） | foundation (math) |
-| R9 | jlreq 縦組が private state 参照で停止 | `\jlreqpdf@…` 残存 **107 箇所 / 20 ブロック** | jlreq (class) |
-| R10 | jlreq の旧 backend が残存 | `jlreq-pdftex{,-rules,-ruby,-paragraph}.sty` が現役 | jlreq |
+| R4 | 縦組ページのテキスト抽出が空 | `standalone-tate` の `pdftext_has` 3 件 FAIL（compile 0 error、glyph は正常） | **未帰属**。まず計測器（pdftotext の回転フィルタ）か描画（`/XObject` CTM・ToUnicode）かを切り分ける。`tests/run-tests.sh` の `pdftext_has` + `tex/pdftexja-direction.sty` の shipout 回転（JLREQ 相当: 旧 `jlreq-pdftex.sty:654-692`） |
+| R5 | 独自 preset で `\begin{document}` の数値走査エラー | tiny preset（role 17/34/83/201/202）で `Missing number <to be read again> =` | `tex/pdftexja-rules.sty` の class 表構築（`\pdftexja@jfm@tables` / `\pdftexja@loadclass`）と `direction` のページ初期化。role が default skip を持たないことが引き金（generator 側で全 class に既定を出すのが本筋） |
+| R6 | `\pdftexjaSetCharSpacing` が存在しない | JS の `！〒+%`、doc の `\ "` が**警告付き no-op**（`tex/pdftexja-class.def:213-224` が `\@ifundefined` 経由で呼ぶ） | API 未実装。`tex/pdftexja-rules.sty` の `\pdftexja@ifxsp` に公開上書き層が無い（plan §5.3 の契約） |
+| R7 | UTF-8 dispatcher が全滅 | `\　`(U+3000) で `! Package pdftexja Error: unknown command spelling`。`和暦/西暦` は登録成功するが dispatch 不可 | `tex/pdftexja-latex.sty:179-230`: `@utf@listgrab` は候補を `{残り}{target}` の入れ子で積むが `@utf@choose@a/b` は平坦 2 トークンとして読み、`@utf@match` は候補枯渇時に捨てる |
+| R8 | 縦組で `\begin{math}…\end{math}` が失敗 | `File ended while scanning use of \pdftexja@math@scan`（yoko では通る） | `tex/pdftexja-math.sty` の `\pdftexja@imath@paren#1\)` が `\)` トークン区切り。`\begin{math}` は `\endmath` で閉じるため一致しない |
+| R11 | TDS/staged/uninstall の証跡が無い | `make tds` 未実行、repo 外 cwd での staged proof 未実行、uninstall sentinel 未実行 | 未実施（plan §10 Verification 4） |
+| R12 | `tests/run-pdftex-tests.sh`（jlreq consumer suite）が未移植 | 旧 backend 前提のまま（font build・旧 preflight） | jlreq 側 runner の再設計（plan §10） |
+
+クラス（bundled classes）:
+
+| # | 症状 | 実測 | 原因の所在（帰属） |
+|---|---|---|---|
+| R1 | `pdfjskiyou` 本文が 1 セル広い | ours 24–25 セル/行 vs ref 23–24。page1 line8 = 17 vs 22、**純全角 CJK**。`\textwidth` は両側 486.21144pt で一致。同一 face（`luatexja-preset[ipaex]`）追試でも不変 | **class 疑い（open diagnostic）**: kiyou の `\fullwidth{48\zw}+\columnsep` と `\zw`→`\columnwidth` の束縛、つまり `\zw` の実寸 vs 段幅。foundation evaluator ではない（pair 値は一致、face 非依存） |
+| R2 | `pdfjltxdoc` page1 line6 が 33 vs 30 | **純 CJK**、face 差では消えない | **class 疑い**: `source/pdfjltxdoc.dtx` の preamble（jslogo/`\Macrocode`・`\verb` wrapper・`\mlineplus`）が可視トークン集合を変えている |
+| R3 | `pdfjtbook` 第1ページ列ピッチ 16.90 vs 15.40 | 章見出し/タイトル材のクラスタ。extent は INFO 出力済み | class（tate book の見出し・タイトルページ）または測定定義（本文クラスタ限定） |
+
+jlreq:
+
+| # | 症状 | 実測 | 原因の所在（帰属） |
+|---|---|---|---|
+| R9 | 縦組 jlreq が private state 参照で停止 | `\jlreqpdf@…` **107 箇所 / 20 ブロック**（units 624–664, savepos 757–887, para reset 1202–1208, UTF8 1494–1651, size 1762–1774, C* 1825–1851, warichu 4604–4870, warichu keys, TCY/jidori/akigumi 6997–7209, reference 7317–7477, insertion 7607–7645, ai-mark 3998–4061, index 6694–6745, math internal 6637–6640） | 旧 backend のアルゴリズム本体が class に残存（plan split §3 の除去対象） |
+| R10 | 旧 backend が現役 | `jlreq-pdftex{,-rules,-ruby,-paragraph}.sty` が install/TDS 対象に残る | 未削除（re-export shim は作らない） |
+| R13 | crop transport が委譲していない | `jlreq-trimmarks.sty` / `jlreq-trimmarks-pdftex.def` が自前で stock/`\pdfpageattr`/回転を実装 | `\pdftexjaSetCropStock/SetCropDrawing/SetPageAttributes/ClockwiseBox` へ委譲すべき（plan §7.2） |
 
 R1/R2 は「純 CJK の折返し差」＝ 評価器ではなく **行容量（`\zw` と段幅）** か
 **クラス固有ブロックの可視トークン集合**の差。face 差ではない（同一 face 追試で不変）。
-
----
 
 ## 2. 作業パッケージ（依存順）
 
@@ -167,7 +180,36 @@ group-local、繰り返し置換、方向・family 共通、分類/penalty/encod
 - 触ってはいけないもの: user の ignored file、`reference/pinned/` の内容、
   TeX Live 側の設定。
 
-## 4. 依存グラフ
+## 4. 順序の原則（API が先、TDS が最後）
+
+クラス群と jlreq は**未実装の基盤 API を消費する**ので、順序は次で固定する:
+
+```
+0) 診断のみ（コード変更なし・並行可）
+   WP1-1 kiyou 行容量 probe / WP4-1 pymupdf での tate 抽出可否 / WP5 の原因特定
+1) 基盤 API を完成させる: WP6 (SetCharSpacing) → WP7 (UTF dispatcher) → WP8 (\begin{math})
+   → WP5 (generator の class 既定 skip) → WP4 (抽出の帰属に応じた修正 or 計測器交換)
+2) クラス修正: WP1 (行容量の束縛をクラス側で確定) → WP2 (ltxdoc) → WP3 (jtbook)
+3) jlreq cutover: WP9 (private 除去・旧 backend 削除・R13 委譲)
+4) 検証/TDS: WP10（class parity を make check へ、provenance 3 モード、TDS/staged/uninstall）
+```
+
+理由: WP6/WP7/WP8 が無いままクラス側を直すと、クラスは no-op 警告経路で「動いて見える」
+状態のまま修正が入り、jlreq の cutover も同じ API 前提で止まる。
+
+## 5. 閾値の据え置き（standing rule）
+
+ゲートは**修正によってのみ**緑にする。以下は結果に合わせて変更しない:
+
+- 折返し誤差帯 `CELL_TOL = 2` セル（`tests/compare-pdf.py`）
+- yoko 行送りグリッド 0.03 pt / tate 列ピッチ 0.05 pt
+- クラス版面値（GEOM）0.03 pt、MediaBox 0.02 bp、縦組グリフ被覆 3 %
+- `check-jfm` の regeneration diff-zero、`check-fonts` の byte 一致
+
+測定精度の改善（例: 本文クラスタ限定のピッチ）は**定義の変更**として本 PLAN に追記し、
+「閾値を緩めた」と区別して記録する。
+
+## 6. 依存グラフ
 
 ```
 WP1 (行容量) ─┬─> R1 PASS
@@ -182,7 +224,9 @@ WP9 (jlreq private 除去) ── 依存: WP6, WP7, WP8 ─> R9/R10 PASS
 WP10 (検証統合) ── 依存: WP1–WP9
 ```
 
-## 5. 直近の一手
+## 7. 直近の一手
 
-`WP1-1`（kiyou の行容量 probe）と `WP4-1`（pymupdf での tate 抽出可否）を同時に実行する。
-どちらも 10 分以内で結論が出て、残り 8 件の設計が確定する。
+診断（コード変更なし）を 3 本同時に: `WP1-1`（kiyou の行容量 probe）、`WP4-1`
+（pymupdf での tate 抽出可否＝計測器か描画かの切り分け）、`WP5`（tiny preset の
+数値走査箇所の特定）。この 3 本で R1/R4/R5 の帰属が確定し、以降の修正順（§4）が
+そのまま実行できる。修正の着手は基盤 API（WP6→WP7→WP8）から。
