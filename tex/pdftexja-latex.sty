@@ -103,16 +103,36 @@
 % with several bytes). The dispatcher consumes exactly the registered
 % byte run and replaces it with a stable protected ASCII command.
 %
-% Candidates are stored per leading byte as
-%   \pdftexja@utf@c{<rest tokens>}{<target>}
-% and the dispatch walks the input with a one-token filter: candidates
-% whose next token matches survive (with that token stripped), the rest
-% are dropped. Several spellings sharing a leading byte are therefore
-% handled; a spelling that is a strict prefix of another is rejected at
-% dispatch (ambiguous spelling) because TeX cannot push back tokens.
-\def\pdftexja@utf@c#1#2{}
-\def\pdftexja@utf@c@stop{\pdftexja@utf@c@stop}
-\def\pdftexja@utf@end{\pdftexja@utf@end}
+% Storage:
+%   \pdftexja@utf@cands@<n>          candidates for leading byte <n>, where
+%                                    <n> is the DECIMAL byte value
+%   \pdftexja@utf@c{<rest>}{<target>} one candidate; <rest> is the
+%                                    canonical (catcode 12) byte run after
+%                                    the leading byte
+%   \<byte>                          the control symbol, defined once to
+%                                    \pdftexja@utf@go{<n>}
+%
+% The candidate list is EXECUTED, never picked apart structurally:
+% \pdftexja@utf@c routes through \pdftexja@utf@op, which every pass points
+% at the operation it wants (probe or filter).  A structural reader
+% re-frames the per-candidate groups on each pass and drops an exhausted
+% candidate; executing the list cannot.
+%
+% Bytes are compared by character CODE (\ifnum), never by \ifx: the stored
+% spelling is a canonical catcode-12 byte sequence, while the bytes read
+% from the input are the ACTIVE characters CJK installed.
+%
+% A spelling that is a strict prefix of another spelling with the same
+% leading byte is rejected at dispatch time (ambiguous spelling): the
+% short spelling is complete while a longer one is still open, and TeX
+% cannot push the lookahead token back.
+\def\pdftexja@utf@c#1#2{\pdftexja@utf@op{#1}{#2}}
+\def\pdftexja@utf@op#1#2{}
+\def\pdftexja@utf@list{}
+\def\pdftexja@utf@newlist{}
+\def\pdftexja@utf@candlist{}
+\newif\ifpdftexja@utf@hit
+\newif\ifpdftexja@utf@open
 
 % public registration (preamble only)
 \def\pdftexjaDeclareUTFCommand#1#2{%
@@ -145,74 +165,99 @@
   \fi}
 \def\pdftexja@utf@register#1#2#3{%
   \edef\pdftexja@utf@byte{\string#1}%
+  \edef\pdftexja@utf@val{\number`#1}%
   \edef\pdftexja@utf@key{\detokenize{#1#2}}%
   \expandafter\ifx\csname pdftexja@utf@declared@\pdftexja@utf@key\endcsname\relax
     \expandafter\def\csname pdftexja@utf@declared@\pdftexja@utf@key\endcsname{1}%
-    % the control symbol for this leading byte (defined once; later
-    % registrations only append to the candidate list)
-    \expandafter\ifx\csname pdftexja@utf@cands@\pdftexja@utf@byte\endcsname\relax
-      \expandafter\def\csname pdftexja@utf@cands@\pdftexja@utf@byte\endcsname{}%
-      \expandafter\def\csname\pdftexja@utf@byte\endcsname{%
-        \pdftexja@utf@go{#1}}%
+    % the control symbol for this leading byte is defined once; later
+    % registrations only append to the candidate list
+    \expandafter\ifx\csname pdftexja@utf@cands@\pdftexja@utf@val\endcsname\relax
+      \expandafter\def\csname pdftexja@utf@cands@\pdftexja@utf@val\endcsname{}%
+      \edef\pdftexja@utf@entry{\noexpand\pdftexja@utf@go{\pdftexja@utf@val}}%
+      \expandafter\let\csname\pdftexja@utf@byte\endcsname\pdftexja@utf@entry
     \fi
-    \pdftexja@utf@appendcand{#2}{#3}%
+    \expandafter\let\expandafter\pdftexja@utf@candlist
+      \csname pdftexja@utf@cands@\pdftexja@utf@val\endcsname
+    \pdftexja@utf@addcand{#2}{#3}%
+    \expandafter\let\csname pdftexja@utf@cands@\pdftexja@utf@val\endcsname
+      \pdftexja@utf@candlist
   \else
     \PackageError{pdftexja}{duplicate UTF command spelling}{%
       The~spelling~is~already~registered.\MessageBreak \@ehc}%
   \fi}
-\def\pdftexja@utf@appendcand#1#2{%
-  \expandafter\let\expandafter\pdftexja@utf@old
-    \csname pdftexja@utf@cands@\pdftexja@utf@byte\endcsname
-  \toks@\expandafter{\pdftexja@utf@old}%
+% append a candidate to \pdftexja@utf@candlist; the stored spelling is
+% canonicalised to its byte values so that stored and input bytes are
+% compared in one and the same form.
+\def\pdftexja@utf@addcand#1#2{%
+  \edef\pdftexja@utf@rest{\detokenize{#1}}%
+  \toks@\expandafter{\pdftexja@utf@candlist}%
+  \toks@\expandafter{\the\toks@\pdftexja@utf@c\expandafter{\pdftexja@utf@rest}{#2}}%
+  \expandafter\def\expandafter\pdftexja@utf@candlist\expandafter{\the\toks@}}
+% append an already canonical candidate to \pdftexja@utf@newlist
+\def\pdftexja@utf@addraw#1#2{%
+  \toks@\expandafter{\pdftexja@utf@newlist}%
   \toks@\expandafter{\the\toks@\pdftexja@utf@c{#1}{#2}}%
-  \expandafter\def\expandafter\pdftexja@utf@newlist\expandafter{\the\toks@}%
-  \expandafter\let\csname pdftexja@utf@cands@\pdftexja@utf@byte\endcsname
-    \pdftexja@utf@newlist}
-% dispatch entry installed as the control symbol body
+  \expandafter\def\expandafter\pdftexja@utf@newlist\expandafter{\the\toks@}}
+% dispatch entry (installed as the control symbol body)
 \def\pdftexja@utf@go#1{%
-  \expandafter\pdftexja@utf@expandcands
-    \csname pdftexja@utf@cands@\string#1\endcsname}
-\def\pdftexja@utf@expandcands#1{%
-  \expandafter\pdftexja@utf@listgrab#1\pdftexja@utf@c@stop}
-\def\pdftexja@utf@listgrab#1\pdftexja@utf@c@stop{%
+  \expandafter\pdftexja@utf@load\csname pdftexja@utf@cands@#1\endcsname}
+\def\pdftexja@utf@load#1{%
   \def\pdftexja@utf@list{#1}%
-  \pdftexja@utf@choose}
-% pick the head candidate: emit when its remaining spelling is empty and
-% no other candidate is left; otherwise read one more input token.
-\def\pdftexja@utf@choose{%
-  \expandafter\pdftexja@utf@choose@a\pdftexja@utf@list\pdftexja@utf@c@stop}
-\def\pdftexja@utf@choose@a#1#2#3\pdftexja@utf@c@stop{%
-  \pdftexja@utf@choose@b#3\pdftexja@utf@end{#2}}
-\def\pdftexja@utf@choose@b#1#2\pdftexja@utf@end#3{%
-  \def\pdftexja@utf@rest{#3}%
-  \def\pdftexja@utf@more{#2}%
+  \pdftexja@utf@probe}
+% probe: is some candidate complete, and is some other candidate still
+% open?  Nothing is read from the input here.
+\def\pdftexja@utf@probe{%
+  \pdftexja@utf@hitfalse
+  \pdftexja@utf@openfalse
+  \let\pdftexja@utf@op\pdftexja@utf@probe@one
+  \pdftexja@utf@list
+  \pdftexja@utf@probe@done}
+\def\pdftexja@utf@probe@one#1#2{%
+  \def\pdftexja@utf@rest{#1}%
   \ifx\pdftexja@utf@rest\@empty
-    \ifx\pdftexja@utf@more\@empty
-      #1%
-    \else
+    \pdftexja@utf@hittrue
+    \def\pdftexja@utf@target{#2}%
+  \else
+    \pdftexja@utf@opentrue
+  \fi}
+\def\pdftexja@utf@probe@done{%
+  \ifpdftexja@utf@hit
+    \ifpdftexja@utf@open
       \PackageError{pdftexja}{ambiguous UTF command spelling}{%
-        A~registered~spelling~is~a~prefix~of~another~with~the~same\MessageBreak
-        leading~byte.~TeX~cannot~push~back~the~extra~tokens.\MessageBreak
-        \@ehc}%
+        A~registered~spelling~is~a~strict~prefix~of~another~spelling~with\MessageBreak
+        the~same~leading~byte.~TeX~cannot~push~back~the~lookahead~token,\MessageBreak
+        so~this~run~cannot~be~dispatched.~Register~only~one~of~the~two\MessageBreak
+        spellings.\MessageBreak \@ehc}%
+    \else
+      \pdftexja@utf@target
     \fi
   \else
-    \expandafter\pdftexja@utf@readnext\fi}
-\def\pdftexja@utf@readnext#1{%
-  \def\pdftexja@utf@tok{#1}%
-  \pdftexja@utf@filter}
-\def\pdftexja@utf@filter{%
-  \let\pdftexja@utf@newlist\@empty
-  \expandafter\pdftexja@utf@filterloop\pdftexja@utf@list\pdftexja@utf@c@stop}
-\def\pdftexja@utf@filterloop#1{%
-  \ifx#1\pdftexja@utf@c@stop
-    \expandafter\pdftexja@utf@filterdone
-  \else
-    \expandafter\pdftexja@utf@filterone
+    \pdftexja@utf@readnext
   \fi}
-\def\pdftexja@utf@filterone#1#2{%
-  \pdftexja@utf@match{#1}{#2}%
-  \pdftexja@utf@filterloop}
-\def\pdftexja@utf@filterdone{%
+% read the next input byte (unexpanded: the active character token stays
+% a character token) and remember its code
+\def\pdftexja@utf@readnext#1{%
+  \edef\pdftexja@utf@num{\number`#1}%
+  \pdftexja@utf@filter}
+% keep the candidates whose next byte matches the input byte, stripped of
+% that byte; the rest are dropped
+\def\pdftexja@utf@filter{%
+  \def\pdftexja@utf@newlist{}%
+  \let\pdftexja@utf@op\pdftexja@utf@filter@one
+  \pdftexja@utf@list
+  \pdftexja@utf@filter@done}
+\def\pdftexja@utf@filter@one#1#2{%
+  \def\pdftexja@utf@rest{#1}%
+  \ifx\pdftexja@utf@rest\@empty
+    \pdftexja@utf@addraw{}{#2}%
+  \else
+    \pdftexja@utf@strip#1\pdftexja@utf@stop{#2}%
+  \fi}
+\def\pdftexja@utf@strip#1#2\pdftexja@utf@stop#3{%
+  \ifnum`#1=\pdftexja@utf@num\relax
+    \pdftexja@utf@addraw{#2}{#3}%
+  \fi}
+\def\pdftexja@utf@filter@done{%
   \let\pdftexja@utf@list\pdftexja@utf@newlist
   \ifx\pdftexja@utf@list\@empty
     \PackageError{pdftexja}{unknown command spelling}{%
@@ -220,25 +265,8 @@
       command~spelling.~Register~it~with~\string\pdftexjaDeclareUTFCommand.\MessageBreak
       \@ehc}%
   \else
-    \pdftexja@utf@choose
+    \pdftexja@utf@probe
   \fi}
-\def\pdftexja@utf@match#1#2{%
-  \def\pdftexja@utf@rest{#1}%
-  \ifx\pdftexja@utf@rest\@empty
-  \else
-    \pdftexja@utf@match@a#1\pdftexja@utf@end{#2}%
-  \fi}
-\def\pdftexja@utf@match@a#1#2\pdftexja@utf@end#3{%
-  \ifx#1\pdftexja@utf@tok
-    \expandafter\pdftexja@utf@match@yes
-  \else
-    \expandafter\pdftexja@utf@gobble
-  \fi
-  {#2}{#3}}
-\def\pdftexja@utf@match@yes#1#2{%
-  \expandafter\def\expandafter\pdftexja@utf@newlist\expandafter{%
-    \pdftexja@utf@newlist\pdftexja@utf@c{#1}{#2}}}
-\def\pdftexja@utf@gobble#1#2{}
 
 % full-width space spelling (U+3000, e3 80 80): an explicit Japanese
 % space is one zw of glue with the neutral explicit-space boundary state.

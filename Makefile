@@ -210,12 +210,13 @@ check-jfm:
 check-fonts:
 	@tmp=`mktemp -d "$${TMPDIR:-/tmp}/pdftexja-fonts-check.XXXXXXXX"`; \
 	trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
-	cp -r $(FONTDIR) "$$tmp/regen1" || exit 1; \
-	$(PYTHON) $(SCRIPTS)/pdftexja-fonts.py --fontset all --outdir "$$tmp/regen1" \
-	  --manifest "$$tmp/regen1/pdftexja-font-assets.mk" || exit 1; \
-	diff -r "$$tmp/regen1" $(FONTDIR) || { \
+	cd "$$tmp" && $(PYTHON) "$(CURDIR)/scripts/pdftexja-fonts.py" --fontset all \
+	  --outdir fonts/pdftexja \
+	  --manifest fonts/pdftexja/pdftexja-font-assets.mk || exit 1; \
+	diff -r "$$tmp/fonts/pdftexja" "$(CURDIR)/fonts/pdftexja" || { \
 	  echo "FAIL: check-fonts: regeneration is not byte-identical" >&2; exit 1; }; \
-	$(PYTHON) tests/check-fonts.py $(FONTDIR) $(FONT_PROFILES) || exit 1; \
+	$(PYTHON) "$(CURDIR)/tests/check-fonts.py" "$(CURDIR)/fonts/pdftexja" \
+	  $(FONT_PROFILES) || exit 1; \
 	echo "check-fonts: deterministic regeneration + structural checks OK"
 
 check: check-jfm check-fonts check-uninstall
