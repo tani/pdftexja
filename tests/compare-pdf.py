@@ -46,6 +46,14 @@ except ImportError:  # older bindings
 # Error band for break positions, in characters (cells).  The two sides use
 # different font metrics by design (metric compatibility is NOT required), so
 # a line may absorb one more/fewer cell; anything larger is a layout defect.
+#
+# The band is NOT hiding a font-face artefact: with the reference side forced
+# onto the same face family (\usepackage[ipaex]{luatexja-preset}) the two
+# remaining failures keep their signature and their lines are PURE full-width
+# CJK (measured for pdfjskiyou: ours breaks after 17 cells at 'まみむめも…'
+# where the reference still has 'はひふへほ' and reaches 22), and ltxdoc's
+# divergence survives too.  A pure-CJK break difference is an evaluator or
+# \zw/line-capacity defect, never something this tolerance may absorb.
 CELL_TOL = 2
 
 
