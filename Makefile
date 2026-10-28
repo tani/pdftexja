@@ -21,6 +21,9 @@ SCRIPTS := scripts
 TEXDIR  := tex
 DATADIR := data
 FONTDIR := fonts/pdftexja
+# TDS bundle root (ignored by git).  Overridable so acceptance can build the
+# bundle under its scratch directory instead of writing into the checkout.
+TDS ?= tds
 
 # ---------------------------------------------------------------------------
 # JFM presets
@@ -295,29 +298,29 @@ install: classes jfm fonts
 	  $(PDFTEXJA_TEXMF)/source/latex/pdftexja
 
 tds: classes jfm fonts
-	mkdir -p tds/tex/latex/pdftexja
+	mkdir -p $(TDS)/tex/latex/pdftexja
 	cp -f $(RUNTIME_TEX_INSTALL) $(JFM_INSTALL) $(PROFILE_INSTALL) \
-	  tds/tex/latex/pdftexja
+	  $(TDS)/tex/latex/pdftexja
 	@for f in $(FONTDIR)/pdftexja-fonts-*-adv.def $(FONTDIR)/pdftexja-fonts-*-cid.def; do \
-	  test -e "$$f" && cp -f "$$f" tds/tex/latex/pdftexja || true; done
-	mkdir -p tds/fonts/truetype/public/pdftexja
+	  test -e "$$f" && cp -f "$$f" $(TDS)/tex/latex/pdftexja || true; done
+	mkdir -p $(TDS)/fonts/truetype/public/pdftexja
 	@for f in $(FONTDIR)/*.ttf; do test -e "$$f" && cp -f "$$f" \
-	  tds/fonts/truetype/public/pdftexja || true; done
-	mkdir -p tds/fonts/tfm/public/pdftexja
+	  $(TDS)/fonts/truetype/public/pdftexja || true; done
+	mkdir -p $(TDS)/fonts/tfm/public/pdftexja
 	@for f in $(FONTDIR)/*.tfm; do test -e "$$f" && cp -f "$$f" \
-	  tds/fonts/tfm/public/pdftexja || true; done
-	mkdir -p tds/fonts/enc/dvips/pdftexja
+	  $(TDS)/fonts/tfm/public/pdftexja || true; done
+	mkdir -p $(TDS)/fonts/enc/dvips/pdftexja
 	@for f in $(FONTDIR)/*.enc; do test -e "$$f" && cp -f "$$f" \
-	  tds/fonts/enc/dvips/pdftexja || true; done
-	mkdir -p tds/scripts/pdftexja
+	  $(TDS)/fonts/enc/dvips/pdftexja || true; done
+	mkdir -p $(TDS)/scripts/pdftexja
 	cp -f $(SCRIPTS)/pdftexja-jfm-lib.lua $(SCRIPTS)/pdftexja-jfm.lua \
 	  $(SCRIPTS)/pdftexja-check-jfm.lua $(SCRIPTS)/pdftexja-fonts.py \
-	  $(SCRIPTS)/pdftexja-check-inputs.py tds/scripts/pdftexja
-	mkdir -p tds/doc/latex/pdftexja
+	  $(SCRIPTS)/pdftexja-check-inputs.py $(TDS)/scripts/pdftexja
+	mkdir -p $(TDS)/doc/latex/pdftexja
 	@for f in $(DOCS); do test -e "$$f" && cp -f "$$f" \
-	  tds/doc/latex/pdftexja || true; done
-	mkdir -p tds/source/latex/pdftexja
-	cp -f $(DATADIR)/*.lua source/*.dtx source/*.ins tds/source/latex/pdftexja
+	  $(TDS)/doc/latex/pdftexja || true; done
+	mkdir -p $(TDS)/source/latex/pdftexja
+	cp -f $(DATADIR)/*.lua source/*.dtx source/*.ins $(TDS)/source/latex/pdftexja
 
 # Uninstall only ever removes pdftexja's own directories, and refuses an
 # empty or root target (plan §9).
@@ -334,7 +337,8 @@ uninstall:
 	rm -rf "$(PDFTEXJA_TEXMF)/source/latex/pdftexja"
 
 clean:
-	rm -rf tds
+	@case "$(TDS)" in ""|"/"|".") echo "clean: refusing unsafe TDS='$(TDS)'" >&2; exit 1;; esac
+	rm -rf "$(TDS)"
 	rm -f $(FONTDIR)/*.ttf $(FONTDIR)/*.tfm $(FONTDIR)/*.enc \
 	  $(FONTDIR)/*-adv.def $(FONTDIR)/*-cid.def \
 	  $(FONTDIR)/pdftexja-font-assets.mk
