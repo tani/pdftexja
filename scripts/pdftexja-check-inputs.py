@@ -147,7 +147,13 @@ def main(argv):
                 if not is_under(p, j_tree):
                     errors.append("jlreq resource outside the jlreq tree: %s" % p)
             if b.startswith("pdftexja-"):
-                if not is_under(p, p_tree):
+                # The class-owned JFM preset (plan §9) ships in the jlreq tree:
+                # pdftexja-jfm-jlreq*.def + its manifests are jlreq artifacts.
+                if b.startswith("pdftexja-jfm-jlreq"):
+                    if not is_under(p, j_tree):
+                        errors.append(
+                            "class-owned JFM preset outside the jlreq tree: %s" % p)
+                elif not is_under(p, p_tree):
                     errors.append("pdftexja resource outside the pdftexja tree: %s" % p)
 
     else:  # native
