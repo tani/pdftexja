@@ -83,6 +83,11 @@ pdfjtbook ltjtbook 1
 pdfjsarticle ltjsarticle 0
 pdfjsreport ltjsreport 0
 pdfjsbook ltjsbook 0
+# pdfjspf/pdfjskiyou require a title block BY CLASS CONTRACT (the class
+# prints it), so the shared body alone would fail to build; the extra
+# preamble below supplies the minimum the class demands, identically on both
+# sides.  A future layout fixture that changes this table must keep that
+# property, otherwise the failure shows up as a compile error, not a gate.
 pdfjspf ltjspf 0 \title{標題}\author{著者}\date{}\def\Keywords{キーワード}\def\Email{e@x}
 pdfjskiyou ltjskiyou 0
 pdfjltxdoc ltjltxdoc 0
@@ -95,6 +100,7 @@ SKIPPED=0
 
 while read -r ours ref tate extra; do
   [ -n "${ours:-}" ] || continue
+  case "${ours}" in \#*) continue;; esac
   case " ${CLASSES:-all} " in
     *" all "*|*" $ours "*) ;;
     *) continue ;;
@@ -144,6 +150,12 @@ EOF
     echo "FAIL: $ours: class geometry ours($ga) vs ref($gb)"
     FAILED=$((FAILED + 1)); continue
   fi
+
+  # (1b) DIAGNOSTIC ONLY: the page-1 painted extent.  The tate gates assert
+  # text + column pitch, which cannot see a constant drift of the whole set
+  # area (e.g. a furniture/topskip regression); logging the extent keeps such
+  # a drift visible without turning an orientation artefact into FAIL.
+  python3 "$REPO/tests/page-extent.py" "$dir/ours.pdf" "$dir/ref.pdf" "$ours"
 
   # (2) PDF-level parity
   if python3 "$REPO/tests/compare-pdf.py" "$dir/ours.pdf" "$dir/ref.pdf" "$ours" \

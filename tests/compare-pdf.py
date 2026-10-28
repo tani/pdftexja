@@ -19,9 +19,12 @@ What is asserted, and why it is a quality statement rather than a smoke test:
   4. LINES      per-page line count is identical (the body is rigid: CJK
                 runs break at whole cells, so this compares the line-breaking
                 decisions, not font advances).
-  5. GRID       the page's most frequent successive-baseline distance (the
-                body line grid) matches within the tolerance (0.03 pt): the
-                class's own \\baselineskip grid is reproduced.
+  5. GRID       yoko: the page's most frequent successive-baseline distance
+                (the body line grid) matches within 0.03 pt.  tate: the
+                COLUMN PITCH (mode of successive x-cluster gaps) matches
+                within 0.05 pt -- raw tate coordinates are not comparable
+                because pdftexja rotates a horizontal galley while
+                LuaTeX-ja lays out vertical writing natively.
 
 Extraction uses PyMuPDF, which resolves arbitrary CTMs; pdftotext is NOT
 used because its rotated-layout filtering drops tate pages.
@@ -124,13 +127,28 @@ def main(argv):
         text_a.append("".join(norm_text(t) for t, _, _ in la))
         text_b.append("".join(norm_text(t) for t, _, _ in lb))
         if tate:
-            # Vertical writing: the two engines ship differently-ORIENTED
-            # pages (pdftexja rotates a horizontal galley, LuaTeX-ja lays out
-            # vertical writing natively), so raw PDF coordinates are not
-            # comparable and every glyph is its own extracted "line".  The
-            # parity contract for tate is therefore: same text (asserted
-            # below), same page structure, and the same glyph coverage; the
-            # class-level layout is asserted by the GEOM probe.
+            # Vertical writing: pdftexja rotates a horizontal galley, so its
+            # page x axis is the GALLEY's vertical axis, while LuaTeX-ja lays
+            # out vertical writing natively and its x axis is the page's
+            # horizontal axis.  Raw coordinates and edges are therefore not
+            # comparable (measured: identical 16.93/16.94 pt column pitch,
+            # different absolute origins).  The comparable positional
+            # quantity is the COLUMN GRID: the pitch between successive
+            # x-clusters, which both engines derive from the class
+            # baselineskip.
+            def pitch_of(lines):
+                xs = sorted({round(b[0], 1) for _, b, _ in lines})
+                ds = [round(xs[k + 1] - xs[k], 1) for k in range(len(xs) - 1)]
+                ds = [d for d in ds if 4.0 < d < 40.0]
+                if len(ds) < 4:      # too few columns: no stable grid
+                    return None
+                bins = {}
+                for d in ds:
+                    bins[d] = bins.get(d, 0) + 1
+                return sorted(bins.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+            pa, pb = pitch_of(la), pitch_of(lb)
+            if pa is not None and pb is not None and abs(pa - pb) > 0.05:
+                fail("page %d: column pitch %.2f vs %.2f pt" % (i + 1, pa, pb))
             na, nb = len(la), len(lb)
             if abs(na - nb) > max(4, int(0.03 * max(na, nb))):
                 fail("page %d: glyph-cell count %d vs %d" % (i + 1, na, nb))
