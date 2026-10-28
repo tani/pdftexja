@@ -143,19 +143,23 @@
   % (centring on the baseline shifted every embedded yoko box half a
   % character out of the column; measured against ltjtarticle's
   % \hbox{\yoko ...}: column centre 467.24bp, ours was 459.56bp).
+  % (the centre is .5em - \pdftexja@tate@lower: the tate glyphs are
+  % lowered by that amount, see pdftexja-fonts.sty)
+  \pdftexja@emb@c=\dimexpr.5\pdftexja@jareg-\pdftexja@tate@lower\relax
   \setbox\@tempboxa=\hbox{%
-    \raise\dimexpr.5\pdftexja@zw-.5\pdftexja@emb@w\relax
+    \raise\dimexpr\pdftexja@emb@c-.5\pdftexja@emb@w\relax
     \box\@tempboxa}%
   % advance = h+d of the body (no slack; pTeX's yoko-in-tate advance)
   \wd\@tempboxa=\dimexpr\pdftexja@emb@h+\pdftexja@emb@d\relax
   % cross extent: the body's width split evenly around the cell centre
-  \ht\@tempboxa=\dimexpr.5\pdftexja@zw+.5\pdftexja@emb@w\relax
-  \dp\@tempboxa=\dimexpr.5\pdftexja@emb@w-.5\pdftexja@zw\relax
+  \ht\@tempboxa=\dimexpr\pdftexja@emb@c+.5\pdftexja@emb@w\relax
+  \dp\@tempboxa=\dimexpr.5\pdftexja@emb@w-\pdftexja@emb@c\relax
   \ifdim\dp\@tempboxa<\z@ \dp\@tempboxa=\z@ \fi
   \box\@tempboxa}
 \newdimen\pdftexja@emb@w
 \newdimen\pdftexja@emb@h
 \newdimen\pdftexja@emb@d
+\newdimen\pdftexja@emb@c
 % tate-in-yoko exact embedding: the tate run (built horizontally in the
 % inner frame) rotated CCW so it reads top-to-bottom in the yoko page;
 % advance = the body's cross extent, cross = its run length.

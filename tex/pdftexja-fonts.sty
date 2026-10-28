@@ -146,8 +146,62 @@
   \pdftexja@jareg=\pdftexja@opt@jascale\pdftexja@jareg
   \pdftexja@units@update
 }
+% Tate cross-axis frame (LuaTeX-ja \adjustbaseline / ltj@tablshift): the
+% Latin baseline of a tate line sits tablshift = (ht(M)-dp(M))/2 below the
+% centre of the Japanese glyph cell, so the Latin M is centred on the
+% Japanese glyphs.  A rotated tate glyph here occupies [0,1em] from the
+% galley baseline (centre .5em), so every tate glyph is lowered by
+% \pdftexja@tate@lower = .5em - tablshift.  The line's height drops by the
+% same amount, so the line baseline itself moves up (the first line sits
+% at its height, later ones keep the baselineskip from it): the Japanese
+% glyphs keep their page position and Latin text, math and rules land at
+% LuaTeX-ja's place (measured against ltjtarticle: 112 of 115 ink pieces
+% within 0.15pt at 10pt, all 58 at \Large).
+\newdimen\pdftexja@tate@lower
+% Only for a Latin font selection: CJK.sty selects its C70 subfonts
+% through \selectfont too, and there \font has no `M' (the value would
+% collapse to .5em).
+\def\pdftexja@tate@setlower{%
+  \ifnum\pdfstrcmp{\f@encoding}{C70}=\z@\else
+    \pdftexja@tate@lower=\dimexpr.5\pdftexja@jareg
+      -(\fontcharht\font`M-\fontchardp\font`M)/2\relax
+  \fi}
+% Struts follow the direction like LuaTeX-ja's (lltjfont.sty): \strutbox
+% names the yoko strut (.7/.3\baselineskip, the kernel's) or the tate
+% strut, which LuaTeX-ja centres on the tate baseline, i.e. on the
+% Japanese glyph centre; that centre is (ht(M)-dp(M))/2 = .5em - \pdftexja@
+% tate@lower above the Latin baseline used here.  The selectfont hook runs
+% before the kernel's \size@update, so a pending size update is extended
+% to rebuild both struts after it; a font change alone recentres the tate
+% strut, but only when its centre moved: CJK.sty selects a C70 subfont for
+% every Japanese glyph, and a box built there breaks the Latin/Japanese
+% boundary detection (xkanjiskip after Latin is lost).
+% (\pdftexja@dir is allocated in pdftexja-rules.sty.)
+\let\pdftexja@ystrutbox\strutbox
+\newbox\pdftexja@tstrutbox
+\newdimen\pdftexja@tstrut@lower
+\def\strutbox{\ifnum\pdftexja@dir=\@ne
+  \pdftexja@tstrutbox\else\pdftexja@ystrutbox\fi}
+\def\pdftexja@tate@setstrut{%
+  \pdftexja@tstrut@lower=\pdftexja@tate@lower
+  \setbox\pdftexja@tstrutbox\hbox{\vrule\@width\z@
+    \@height\dimexpr.5\baselineskip+.5\pdftexja@jareg-\pdftexja@tate@lower\relax
+    \@depth\dimexpr.5\baselineskip-.5\pdftexja@jareg+\pdftexja@tate@lower\relax}}
+\def\pdftexja@setstruts{%
+  \setbox\pdftexja@ystrutbox\hbox{\vrule\@width\z@
+    \@height.7\baselineskip\@depth.3\baselineskip}%
+  \pdftexja@tate@setstrut}
 \def\pdftexja@selectfont@hook{%
   \pdftexja@setsize
+  \pdftexja@tate@setlower
+  \ifx\size@update\relax
+    \ifdim\pdftexja@tate@lower=\pdftexja@tstrut@lower\else
+      \pdftexja@tate@setstrut
+    \fi
+  \else
+    \expandafter\def\expandafter\size@update\expandafter{%
+      \size@update\pdftexja@setstruts}%
+  \fi
   \pdftexja@trackseries
 }
 \AddToHook{selectfont}{\pdftexja@selectfont@hook}%

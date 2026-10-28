@@ -17,7 +17,7 @@ primitives, plus 12 document classes built on it.
 - `jlreq` uses this package through a small adapter; both share one gate suite.
 
 > **Status**: v0.1. Every behaviour below is covered by the gate suites in
-> `tests/` (12 foundation checks, 12 class pairs against LuaTeX-ja, and the
+> `tests/` (15 foundation checks, 12 class pairs against LuaTeX-ja, and the
 > 163-gate jlreq consumer suite). `PLAN.md` is the defect register: each entry
 > carries measured evidence and a resolution.
 
@@ -152,7 +152,7 @@ refuses an unsafe `TDS` value such as `/`.
 ## Tests
 
 ```sh
-sh tests/run-tests.sh --texmf <staged-texmf>       # 12 foundation checks
+sh tests/run-tests.sh --texmf <staged-texmf>       # 15 foundation checks
 sh tests/run-class-tests.sh --texmf <staged-texmf> # 12 class pairs vs LuaTeX-ja
 sh tests/acceptance.sh --pdftexja . --jlreq ../jlreq
 ```
@@ -213,6 +213,33 @@ an explicit error if `pdftexja.sty` is missing.
    origin (0.88 em offset plus per-glyph ink profile). Anchor comparisons are
    therefore bounded at 4.0 pt, while all cross-direction quantities and the
    note-column pitch are gated at 0.5 pt.
+4. **JIS punctuation claimed by inputenc** (`PLAN.md` R24). For 32 JIS X 0208
+   non-kanji — ‐ ― ‖ … ‘ ’ “ ” 〈 〉 ± × ÷ ° ℃ § ※ → ← ↑ ↓ ‰ ♪ † ‡ ¶ ◯ ´ ¨ ¢ £ ¬ —
+   LaTeX's inputenc `\u8:` definitions (`\textellipsis`, `\textquotedblleft`,
+   …) take precedence over CJKutf8, so they are set in the **Latin** font in
+   both directions: they get Latin widths, are not rotated in tate, and are
+   extracted as Latin text (… → `. . .`, ― → `—`, ‐ → `-`). LuaTeX-ja and pTeX
+   set 29 of them (all but ¢ £ ¬) as Japanese. This is kept deliberately, since
+   moving them to the Japanese side would also make “ ” ‘ ’ ± × in Latin
+   text full-width. A document that wants them Japanese can say so in the
+   preamble with bxcjkjatype's `\CJKforce`, e.g. `\CJKforce{…―〈〉}`.
+5. **No spacing at `\hbox` boundaries** (`PLAN.md` R27). pdftexja treats a box
+   boundary as the JFM's box boundary (class 90): no xkanjiskip and no JFM
+   glue is inserted between a box and an adjacent Japanese character.
+   LuaTeX-ja treats a box like a Latin character and inserts them. So
+   `漢\mbox{AB}漢` has no JA–Latin space, and a running head
+   `\rensuji{0}・\rensuji{1}` has no space around ・, and along-column
+   positions after such a box differ from LuaTeX-ja by up to the omitted
+   space (2.4 pt at 10 pt in `pdfjtbook`). This is kept: changing it moves the
+   line breaks of every class. Add the space by hand where it matters
+   (e.g. `漢\hskip.25\zw\mbox{AB}`).
+6. **Tate baseline** (`PLAN.md` R26). In vertical writing the line baseline
+   here is the Latin baseline, (ht(M)−dp(M))/2 (3.4 pt at 10 pt) below
+   LuaTeX-ja's, which is the Japanese glyph centre. Japanese glyphs, Latin
+   text, inline math, footnote marks and `\strut` are placed to match
+   LuaTeX-ja, but a raw `\vrule`/`\rule` is measured from this baseline. For
+   example the footnote rule, placed by the kernel's `\rule\z@\footnotesep`,
+   sits 2.4 pt off.
 
 ## License
 

@@ -528,6 +528,43 @@
     }%
   }%
 
+
+%. ------------------------------------------------ footnote marks (tate)
+% pLaTeX (plcore) and LuaTeX-ja (lltjcore) set the footnote mark in tate as
+% an upright (yoko) superscript, and the mark in the text takes no room
+% along the line: it stands beside the preceding character (back .25zw,
+% raised .9zh to the right of the column).  Yoko keeps the kernel's mark.
+% Classes that define their own \@makefnmark later still override it.
+\def\@makefnmark{\hbox{%
+  \pdftexjaIfDirectionTF{tate}%
+    {\pdftexjaBox{yoko}{\@textsuperscript{\normalfont\@thefnmark}}}%
+    {\@textsuperscript{\normalfont\@thefnmark}}}}
+\def\pdftexja@process@makefnmark#1{%
+  \pdftexjaIfDirectionTF{tate}%
+    {\hbox to\z@{\hskip-.25\zw\raise.9\zh#1\hss}}%
+    {#1}}
+\ifdefined\@kernel@process@makefnmark
+  \let\pdftexja@orig@kernel@process@makefnmark\@kernel@process@makefnmark
+  \def\@kernel@process@makefnmark#1{%
+    \pdftexja@orig@kernel@process@makefnmark{\pdftexja@process@makefnmark{#1}}}
+\else
+  \def\pdftexja@tmp{\leavevmode
+    \ifhmode\edef\@x@sf{\the\spacefactor}\nobreak\fi
+    \@makefnmark
+    \ifhmode\spacefactor\@x@sf\fi
+    \relax}
+  \ifx\@footnotemark\pdftexja@tmp
+    \def\@footnotemark{\leavevmode
+      \ifhmode\edef\@x@sf{\the\spacefactor}\nobreak\fi
+      \pdftexja@process@makefnmark\@makefnmark
+      \ifhmode\spacefactor\@x@sf\fi
+      \relax}
+  \else
+    \PackageWarningNoLine{pdftexja}{\string\@footnotemark\space is not the
+      kernel's; the tate footnote mark keeps its advance}
+  \fi
+\fi
+
 \makeatother
 
 \endinput

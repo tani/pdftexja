@@ -384,11 +384,10 @@
   \setbox\pdftexja@mathbox=\hbox{\m@th
     \pdftexja@dollar@plain#1\pdftexja@dollar@plain}%
   \global\advance\pdftexja@nest-1
-  \ifdim\pdftexja@math@delta=\z@
-    \box\pdftexja@mathbox
-  \else
-    \raise-\pdftexja@math@delta\box\pdftexja@mathbox
-  \fi
+  % LuaTeX-ja: inline math sits on the Latin baseline (tablshift);
+  % the shift is the galley-level one (pdftexja-fonts.sty), so the
+  % formula is not lowered by delta_t (the former uplatex placement).
+  \box\pdftexja@mathbox
   \global\pdftexja@math@grab=\z@
   % 数式は欧文境界（クラス27; peek@lat と同じ意味論）
   \global\pdftexja@lastclass=27
@@ -431,11 +430,10 @@
     \setbox\pdftexja@mathbox=\hbox{\m@th
       \pdftexja@dollar@plain#1\pdftexja@dollar@plain}%
     \global\advance\pdftexja@nest-1
-    \ifdim\pdftexja@math@delta=\z@
-      \box\pdftexja@mathbox
-    \else
-      \raise-\pdftexja@math@delta\box\pdftexja@mathbox
-    \fi
+    % LuaTeX-ja: inline math sits on the Latin baseline (tablshift);
+    % the shift is the galley-level one (pdftexja-fonts.sty), so the
+    % formula is not lowered by delta_t (the former uplatex placement).
+    \box\pdftexja@mathbox
     \global\pdftexja@math@grab=\z@
     \global\pdftexja@lastclass=27
   \else

@@ -1511,7 +1511,11 @@
   % plane byte: `\CJK@plane*256+#1').  The profile keys are DECIMAL
   % codepoints.
   \expandafter\ifx\csname pdftexja@vglyph@\number\pdftexja@cp\endcsname\relax
-    \pdftexja@glyph@tate@plain{#1}%
+    \ifcsname pdftexja@vrot@\number\pdftexja@cp\endcsname
+      \pdftexja@glyph@tate@side{#1}%
+    \else
+      \pdftexja@glyph@tate@plain{#1}%
+    \fi
   \else
     \expandafter\pdftexja@vgparse
       \csname pdftexja@vglyph@\number\pdftexja@cp\endcsname
@@ -1557,7 +1561,7 @@
     \pdftexja@vert@kern=\z@
     \pdftexja@tate@alignkern
     \ifdim\pdftexja@vert@kern=\z@\else\kern\pdftexja@vert@kern\fi
-    \rotatebox{90}{\pdftexja@orig@CJKsymbol{#1}}}%
+    \lower\pdftexja@tate@lower\hbox{\rotatebox{90}{\pdftexja@orig@CJKsymbol{#1}}}}%
   \global\advance\pdftexja@nest-1
   \wd\pdftexja@charbox=\pdftexja@cls@w\pdftexja@zw
   \ifnum\pdftexja@insctx=1
@@ -1610,12 +1614,29 @@
       -\fontcharht\font\pdftexja@vg@slot\relax
     \pdftexja@tate@alignkern
     \kern\pdftexja@vert@kern
-    \rotatebox{90}{%
-      \expandafter\char\pdftexja@vg@slot\relax}}%
+    \lower\pdftexja@tate@lower\hbox{\rotatebox{90}{%
+      \expandafter\char\pdftexja@vg@slot\relax}}}%
   \global\advance\pdftexja@nest-1
   \ht\pdftexja@charbox=\pdftexja@cls@h\pdftexja@zw
   \dp\pdftexja@charbox=\pdftexja@cls@d\pdftexja@zw
   \wd\pdftexja@charbox=\pdftexja@cls@w\pdftexja@zw
+  \box\pdftexja@charbox}
+% UAX #50 Vertical_Orientation=R without a vertical form (the profile's
+% \pdftexja@vrot@<cp>, e.g. ：；＜＞－ and halfwidth katakana): set
+% SIDEWAYS like LuaTeX-ja, i.e. not pre-rotated in the rotated galley, in
+% the JFM cell by the class align, with the em box centred on the
+% Japanese glyph centre (.5em - \pdftexja@tate@lower; the unrotated em box
+% spans [-.12em,.88em] around its baseline).
+\def\pdftexja@glyph@tate@side#1{%
+  \pdftexja@tate@classdims
+  \global\advance\pdftexja@nest1
+  \setbox\pdftexja@charbox=\hbox{\pdftexja@orig@CJKsymbol{#1}}%
+  \setbox\pdftexja@charbox=\hbox to\pdftexja@cls@w\pdftexja@zw{%
+    \pdftexja@placealign
+    \raise\dimexpr.12\pdftexja@jareg-\pdftexja@tate@lower\relax
+      \box\pdftexja@charbox
+    \pdftexja@placealign@post}%
+  \global\advance\pdftexja@nest-1
   \box\pdftexja@charbox}
 % no profile entry (e.g. yoko-only font in tate): rotate the plain glyph
 % and keep the class width -- but ONLY when a profile exists at all;
