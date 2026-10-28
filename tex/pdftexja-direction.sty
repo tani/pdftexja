@@ -129,22 +129,37 @@
   \pdftexja@emb@w=\wd\pdftexja@dirbox
   \pdftexja@emb@h=\ht\pdftexja@dirbox
   \pdftexja@emb@d=\dp\pdftexja@dirbox
+  % \rotatebox{90}{B} occupies [0,h+d] along the column with B's TOP at 0
+  % (it reads first) and B's baseline at h, and [0,w] across it (measured:
+  % \rotatebox{90}{\vrule width20pt height5pt depth3pt} is wd=8pt
+  % ht=20pt dp=0pt, ink flush with the current point).  That is already the
+  % pTeX/LuaTeX-ja yoko-in-tate placement along the column, so no kern is
+  % added (the former \kern-h put B's top h BEFORE the cell and the box
+  % overlapped the preceding character).
   \setbox\@tempboxa=\hbox{\rotatebox{90}{\box\pdftexja@dirbox}}%
-  % Shift so B's baseline lands on the outer reference x=0 and the
-  % cross extent (B's width) is centered on the tate baseline.
+  % Across the column, a rotated tate glyph occupies [0,1zw] from the
+  % galley baseline (\pdftexja@glyph@tate@rot: ht=1zw, dp=0), so B's width
+  % is centred on the glyph cell's centre .5zw, not on the baseline
+  % (centring on the baseline shifted every embedded yoko box half a
+  % character out of the column; measured against ltjtarticle's
+  % \hbox{\yoko ...}: column centre 467.24bp, ours was 459.56bp).
+  % (the centre is .5em - \pdftexja@tate@lower: the tate glyphs are
+  % lowered by that amount, see pdftexja-fonts.sty)
+  \pdftexja@emb@c=\dimexpr.5\pdftexja@jareg-\pdftexja@tate@lower\relax
   \setbox\@tempboxa=\hbox{%
-    \kern-\pdftexja@emb@h
-    \lower.5\pdftexja@emb@w
+    \raise\dimexpr\pdftexja@emb@c-.5\pdftexja@emb@w\relax
     \box\@tempboxa}%
   % advance = h+d of the body (no slack; pTeX's yoko-in-tate advance)
   \wd\@tempboxa=\dimexpr\pdftexja@emb@h+\pdftexja@emb@d\relax
-  % cross extent: the body's width split evenly around the baseline
-  \ht\@tempboxa=\dimexpr.5\pdftexja@emb@w\relax
-  \dp\@tempboxa=\dimexpr\pdftexja@emb@w-.5\pdftexja@emb@w\relax
+  % cross extent: the body's width split evenly around the cell centre
+  \ht\@tempboxa=\dimexpr\pdftexja@emb@c+.5\pdftexja@emb@w\relax
+  \dp\@tempboxa=\dimexpr.5\pdftexja@emb@w-\pdftexja@emb@c\relax
+  \ifdim\dp\@tempboxa<\z@ \dp\@tempboxa=\z@ \fi
   \box\@tempboxa}
 \newdimen\pdftexja@emb@w
 \newdimen\pdftexja@emb@h
 \newdimen\pdftexja@emb@d
+\newdimen\pdftexja@emb@c
 % tate-in-yoko exact embedding: the tate run (built horizontally in the
 % inner frame) rotated CCW so it reads top-to-bottom in the yoko page;
 % advance = the body's cross extent, cross = its run length.
@@ -445,12 +460,22 @@
           \kern\pdftexja@firstlineoffset@applied
           \rotatebox{-90}{\box\@outputbox}}%
         \textwidth\textheight
+        % The head and foot are NOT rotated: like pTeX/LuaTeX-ja, the
+        % running head and the folio of a tate page are set horizontally,
+        % so the glyph layer must be in the yoko direction while the
+        % kernel builds them (in the tate direction every CJK glyph of the
+        % head came out rotated 90 degrees).  \pdftexja@setdir is global,
+        % so the body direction is restored afterwards.
+        \edef\pdftexja@out@dir{\number\pdftexja@dir}%
+        \pdftexja@setdir{0}%
+        \pdftexja@saved@outputpage
+        \pdftexja@setdir{\pdftexja@out@dir}%
       \else
         % yoko logical page inside a tate document: already in the final
         % orientation; the furniture line keeps the saved physical width.
         \textwidth\pdftexja@furniturewidth\relax
+        \pdftexja@saved@outputpage
       \fi
-      \pdftexja@saved@outputpage
     \endgroup
   }%
 }

@@ -17,7 +17,7 @@ primitives, plus 12 document classes built on it.
 - `jlreq` uses this package through a small adapter; both share one gate suite.
 
 > **Status**: v0.1. Every behaviour below is covered by the gate suites in
-> `tests/` (12 foundation checks, 12 class pairs against LuaTeX-ja, and the
+> `tests/` (15 foundation checks, 12 class pairs against LuaTeX-ja, and the
 > 163-gate jlreq consumer suite). `PLAN.md` is the defect register: each entry
 > carries measured evidence and a resolution.
 
@@ -29,6 +29,22 @@ primitives, plus 12 document classes built on it.
 | LaTeX | LaTeX2e, `expl3`, `graphicx` |
 | Japanese input | `cjk` + `bxcjkjatype` (loaded automatically per `fontset`) |
 | Fonts | from TeX Live: IPAex (default, Type1 planes), IPA, or HaranoAji |
+
+**Debian/Ubuntu TeX Live.** `texlive-lang-japanese` alone is not enough. The
+default `fontset=ipaex-type1` needs the `ipaex-type1` package, which Debian
+ships in **`texlive-fonts-extra`**. `fontset=ipa` and `fontset=haranoaji` need
+the zhmetrics TFMs (`unisong*`/`unili*`), which are in
+**`texlive-lang-chinese`**. `texlive-full` has both. Measured on Ubuntu 24.04
+(TeX Live 2023.20240207):
+
+| Installed | `ipaex-type1` | `ipa` / `haranoaji` |
+|---|---|---|
+| `texlive-lang-japanese` | fails (pdftexja reports the missing package) | fails: `Font C70/mc/m/n/10/65=unisong65 ... not loadable` |
+| + `texlive-lang-chinese` | fails | works (yoko and tate) |
+| + `texlive-fonts-extra` | works (yoko and tate) | works |
+
+With both installed, the foundation and class-parity suites pass against the
+distribution's real `ipaex-type1`.
 | Tools for building assets | `texlua`, `python3` (fontTools), `ttf2tfm` |
 
 ## Quick start
@@ -95,6 +111,7 @@ document direction.
 | `\pdftexjaSetSpacing{<JA-JA>}{<JA-Latin>}` | Set kanjiskip / xkanjiskip providers |
 | `\pdftexjaGetSpacing`, `\pdftexjaGetPairGlue` | Read the live spacing state |
 | `\pdftexjaSetCharSpacing{<HEX>}{none\|pre\|post\|both}` | Per-scalar spacing permission (preamble only). Requires a JFM descriptor with `boundary_semantics=jfm` — `ujis`, `min`, `jis`, `ptexmin`; the `standard` preset keeps the JLReq boundary evaluator and rejects it with an explicit error |
+| `\pdftexjaFakeParBegin` | Set the next CJK glyph as at a paragraph start (LuaTeX-ja `\ltjfakeparbegin`); used by the `pdfjs*` classes after list labels and run-in headings |
 | `\pdftexjaGetMetrics{<dir>}{\wd}{\ht}{\dp}` | JFM class-0 metrics (**`<w> <h> <d>` order**) |
 | `\pdftexjaMeasureLinePosition{<current>}{<remaining>}`, `\pdftexjaIfPositionKnownTF{T}{F}` | Logical line position/remaining length from `\pdfsavepos` |
 | `\pdftexjaSetCropStock` / `SetCropDrawing` / `SetPageAttributes` / `ClockwiseBox` | Crop, trim and rotation transport |
@@ -151,7 +168,7 @@ refuses an unsafe `TDS` value such as `/`.
 ## Tests
 
 ```sh
-sh tests/run-tests.sh --texmf <staged-texmf>       # 12 foundation checks
+sh tests/run-tests.sh --texmf <staged-texmf>       # 15 foundation checks
 sh tests/run-class-tests.sh --texmf <staged-texmf> # 12 class pairs vs LuaTeX-ja
 sh tests/acceptance.sh --pdftexja . --jlreq ../jlreq
 ```
@@ -166,6 +183,23 @@ sh tests/acceptance.sh --pdftexja . --jlreq ../jlreq
 
 Every gate fails loudly with the measured numbers and the log path. Baselines
 are never re-recorded automatically.
+
+**TeX Live without `ipaex-type1`** (e.g. Debian/Ubuntu without
+`texlive-fonts-extra`, see Requirements): the default fontset cannot load, so
+the gates cannot run. Install the package if you can; otherwise build a
+metric-identical stand-in from the installed IPAex TTFs into the staged tree
+first (needs `ttf2tfm`, `tftopl`, `pltotf` and fontTools; `cm-super` provides
+the Type 1 TS1 fonts the text comparison needs):
+
+```sh
+make install PDFTEXJA_TEXMF=<staged-texmf>
+python3 tests/make-standin-ipaex-type1.py <staged-texmf>
+```
+
+The stand-in matches the ipaex-type1 TFMs exactly (widths, heights, depths,
+font dimensions) and embeds the glyphs as TrueType under the PostScript names
+`IMFCTT1`/`IGFCTT1`. It is for testing only; never install it next to a real
+`ipaex-type1`.
 
 ## Using with jlreq
 
@@ -196,6 +230,33 @@ an explicit error if `pdftexja.sty` is missing.
    origin (0.88 em offset plus per-glyph ink profile). Anchor comparisons are
    therefore bounded at 4.0 pt, while all cross-direction quantities and the
    note-column pitch are gated at 0.5 pt.
+4. **JIS punctuation claimed by inputenc** (`PLAN.md` R24). For 32 JIS X 0208
+   non-kanji — ‐ ― ‖ … ‘ ’ “ ” 〈 〉 ± × ÷ ° ℃ § ※ → ← ↑ ↓ ‰ ♪ † ‡ ¶ ◯ ´ ¨ ¢ £ ¬ —
+   LaTeX's inputenc `\u8:` definitions (`\textellipsis`, `\textquotedblleft`,
+   …) take precedence over CJKutf8, so they are set in the **Latin** font in
+   both directions: they get Latin widths, are not rotated in tate, and are
+   extracted as Latin text (… → `. . .`, ― → `—`, ‐ → `-`). LuaTeX-ja and pTeX
+   set 29 of them (all but ¢ £ ¬) as Japanese. This is kept deliberately, since
+   moving them to the Japanese side would also make “ ” ‘ ’ ± × in Latin
+   text full-width. A document that wants them Japanese can say so in the
+   preamble with bxcjkjatype's `\CJKforce`, e.g. `\CJKforce{…―〈〉}`.
+5. **No spacing at `\hbox` boundaries** (`PLAN.md` R27). pdftexja treats a box
+   boundary as the JFM's box boundary (class 90): no xkanjiskip and no JFM
+   glue is inserted between a box and an adjacent Japanese character.
+   LuaTeX-ja treats a box like a Latin character and inserts them. So
+   `漢\mbox{AB}漢` has no JA–Latin space, and a running head
+   `\rensuji{0}・\rensuji{1}` has no space around ・, and along-column
+   positions after such a box differ from LuaTeX-ja by up to the omitted
+   space (2.4 pt at 10 pt in `pdfjtbook`). This is kept: changing it moves the
+   line breaks of every class. Add the space by hand where it matters
+   (e.g. `漢\hskip.25\zw\mbox{AB}`).
+6. **Tate baseline** (`PLAN.md` R26). In vertical writing the line baseline
+   here is the Latin baseline, (ht(M)−dp(M))/2 (3.4 pt at 10 pt) below
+   LuaTeX-ja's, which is the Japanese glyph centre. Japanese glyphs, Latin
+   text, inline math, footnote marks and `\strut` are placed to match
+   LuaTeX-ja, but a raw `\vrule`/`\rule` is measured from this baseline. For
+   example the footnote rule, placed by the kernel's `\rule\z@\footnotesep`,
+   sits 2.4 pt off.
 
 ## License
 
