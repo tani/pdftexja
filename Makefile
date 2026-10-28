@@ -207,6 +207,11 @@ check-jfm:
 	test $$rc -eq 0 && echo "check-jfm: regeneration diff zero, 5 presets validated"; \
 	exit $$rc
 
+# Determinism gate.  ttf2tfm embeds the OUTPUT PATH in the TFM header
+# ((HEADER D 18 O ...) = the "Created by" comment), so a regeneration must use
+# the SAME relative outdir as the real build or the bytes differ for a correct
+# build.  Proven by tftopl: an absolute-outdir rebuild differs only in those
+# header comment entries; every CHARACTER/GUARDED/parameter entry is identical.
 check-fonts:
 	@tmp=`mktemp -d "$${TMPDIR:-/tmp}/pdftexja-fonts-check.XXXXXXXX"`; \
 	trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \

@@ -185,15 +185,15 @@
     \PackageError{pdftexja}{duplicate UTF command spelling}{%
       The~spelling~is~already~registered.\MessageBreak \@ehc}%
   \fi}
-% append a candidate to \pdftexja@utf@candlist; the stored spelling is
-% canonicalised to its byte values so that stored and input bytes are
-% compared in one and the same form.
+% append a candidate to \pdftexja@utf@candlist.  The stored spelling is
+% kept as the byte tokens themselves; every comparison is made on their
+% character codes, so stored and input bytes are compared in one and the
+% same form whatever their catcodes are.
 \def\pdftexja@utf@addcand#1#2{%
-  \edef\pdftexja@utf@rest{\detokenize{#1}}%
   \toks@\expandafter{\pdftexja@utf@candlist}%
-  \toks@\expandafter{\the\toks@\pdftexja@utf@c\expandafter{\pdftexja@utf@rest}{#2}}%
+  \toks@\expandafter{\the\toks@\pdftexja@utf@c{#1}{#2}}%
   \expandafter\def\expandafter\pdftexja@utf@candlist\expandafter{\the\toks@}}
-% append an already canonical candidate to \pdftexja@utf@newlist
+% append a surviving candidate to \pdftexja@utf@newlist
 \def\pdftexja@utf@addraw#1#2{%
   \toks@\expandafter{\pdftexja@utf@newlist}%
   \toks@\expandafter{\the\toks@\pdftexja@utf@c{#1}{#2}}%
@@ -221,19 +221,23 @@
     \pdftexja@utf@opentrue
   \fi}
 \def\pdftexja@utf@probe@done{%
+  \let\pdftexja@utf@next\relax
   \ifpdftexja@utf@hit
     \ifpdftexja@utf@open
-      \PackageError{pdftexja}{ambiguous UTF command spelling}{%
-        A~registered~spelling~is~a~strict~prefix~of~another~spelling~with\MessageBreak
-        the~same~leading~byte.~TeX~cannot~push~back~the~lookahead~token,\MessageBreak
-        so~this~run~cannot~be~dispatched.~Register~only~one~of~the~two\MessageBreak
-        spellings.\MessageBreak \@ehc}%
+      \let\pdftexja@utf@next\pdftexja@utf@ambiguous
     \else
-      \pdftexja@utf@target
+      \let\pdftexja@utf@next\pdftexja@utf@target
     \fi
   \else
-    \pdftexja@utf@readnext
-  \fi}
+    \let\pdftexja@utf@next\pdftexja@utf@readnext
+  \fi
+  \pdftexja@utf@next}
+\def\pdftexja@utf@ambiguous{%
+  \PackageError{pdftexja}{ambiguous UTF command spelling}{%
+    A~registered~spelling~is~a~strict~prefix~of~another~spelling~with\MessageBreak
+    the~same~leading~byte.~TeX~cannot~push~back~the~lookahead~token,\MessageBreak
+    so~this~run~cannot~be~dispatched.~Register~only~one~of~the~two\MessageBreak
+    spellings.\MessageBreak \@ehc}}
 % read the next input byte (unexpanded: the active character token stays
 % a character token) and remember its code
 \def\pdftexja@utf@readnext#1{%
@@ -260,13 +264,16 @@
 \def\pdftexja@utf@filter@done{%
   \let\pdftexja@utf@list\pdftexja@utf@newlist
   \ifx\pdftexja@utf@list\@empty
-    \PackageError{pdftexja}{unknown command spelling}{%
-      The~byte~run~after~the~control~symbol~is~not~a~registered~UTF\MessageBreak
-      command~spelling.~Register~it~with~\string\pdftexjaDeclareUTFCommand.\MessageBreak
-      \@ehc}%
+    \let\pdftexja@utf@next\pdftexja@utf@unknown
   \else
-    \pdftexja@utf@probe
-  \fi}
+    \let\pdftexja@utf@next\pdftexja@utf@probe
+  \fi
+  \pdftexja@utf@next}
+\def\pdftexja@utf@unknown{%
+  \PackageError{pdftexja}{unknown command spelling}{%
+    The~byte~run~after~the~control~symbol~is~not~a~registered~UTF\MessageBreak
+    command~spelling.~Register~it~with~\string\pdftexjaDeclareUTFCommand.\MessageBreak
+    \@ehc}}
 
 % full-width space spelling (U+3000, e3 80 80): an explicit Japanese
 % space is one zw of glue with the neutral explicit-space boundary state.
