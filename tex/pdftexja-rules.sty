@@ -1250,6 +1250,22 @@
   \fi
 }
 \def\pdftexja@peek@ig{\pdftexja@eatig}
+% (R15 lead -- DO NOT re-apply blindly: supplying an explicit <token2>
+% fence (\futurelet<cs>\A\B with \B an empty macro) stops the caller's
+% \fi from being re-pushed into peek@a's conditional region and fixes the
+% date gates, but it shifts one line in pdfjsbook/pdfjspf page 1 and
+% breaks both ruby gates.  The mechanism is recorded in PLAN.md; the fix
+% must address the ruby ordering at the same time.)
+% \pdftexja@peek@fence: the lookahead FENCE.  \futurelet<cs><A><B> assigns
+% <cs> the token AFTER <B> and pushes <A><B> back.  Called with only one
+% token (the historical form) the next INPUT token becomes <B> and is
+% pushed back out of its context: when that token was the CALLER's \fi it
+% re-entered the stream inside peek@a's own conditional region and closed
+% the caller's \if... one level early (measured: two \today calls in one
+% document -> "Extra \fi"/"Extra \else" on the second call, when the first
+% date branch ended in a CJK glyph).  Supplying an explicit <B> keeps the
+% caller's token stream untouched; the fence itself is a no-op \relax.
+\def\pdftexja@peek@fence{}
 % eat the lookahead'd \inhibitglue token, execute it, re-peek at the
 % real follower (taking it as an argument CONSUMES the token: a plain
 % token insertion looped forever on the never-consumed original)

@@ -25,25 +25,26 @@
 % \let + invoke AFTER the conditionals are closed: nesting an
 % \expandafter\@firstoftwo idiom inside another conditional's branch hands
 % the outer \else/\fi to \@firstoftwo and runs both branches.
+%. One top-level conditional only, and branch selection by \let+invoke
+% AFTER it closes.  The previous nested layout (ifnum dir inside ifnum
+% strcmp) broke when a CJK glyph had been typeset inside an enclosing
+% caller conditional: the next invocation raised "Extra \else" at the
+% predicate's own \else.  Mapping the argument through \csname removes
+% the nesting entirely.
+\def\pdftexja@dirnum@tate{1}
+\def\pdftexja@dirnum@yoko{0}
+\newcount\pdftexja@dirargval
 \def\pdftexjaIfDirectionTF#1#2#3{%
-  \ifnum\pdfstrcmp{#1}{tate}=0 
-    \ifnum\pdftexja@dir=\@ne
-      \let\pdftexja@next\@firstoftwo
-    \else
-      \let\pdftexja@next\@secondoftwo
-    \fi
-  \else
-    \ifnum\pdfstrcmp{#1}{yoko}=0 
-      \ifnum\pdftexja@dir=\z@
-        \let\pdftexja@next\@firstoftwo
-      \else
-        \let\pdftexja@next\@secondoftwo
-      \fi
-    \else
-      \PackageError{pdftexja}{invalid direction `#1'}{%
+  \ifcsname pdftexja@dirnum@#1\endcsname
+  \else \PackageError{pdftexja}{invalid direction `#1'}{%
         Use~yoko~or~tate.\MessageBreak \@ehc}%
-      \let\pdftexja@next\@secondoftwo
-    \fi
+  \fi
+  \edef\pdftexja@dirargname{\csname pdftexja@dirnum@#1\endcsname}%
+  \pdftexja@dirargval=\pdftexja@dirargname\relax
+  \ifnum\pdftexja@dirargval=\pdftexja@dir
+     \let\pdftexja@next\@firstoftwo
+  \else
+     \let\pdftexja@next\@secondoftwo
   \fi
   \pdftexja@next{#2}{#3}}
 % \pdftexja@IfDirArgTF{<dir>}{T}{F}: dispatch on a direction ARGUMENT
