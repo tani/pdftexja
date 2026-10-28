@@ -1,0 +1,38 @@
+% shared-body.tex --- the body compiled by BOTH sides of a class-parity test.
+%
+% One file, two engine paths: the pdftexja class (pdfLaTeX) and the pinned
+% LuaTeX-ja class (LuaLaTeX) read the same tokens, so the only differences
+% are the class/engine implementations.  The content is deliberately
+% "rigid": uniform CJK runs break at whole cells, so a line-count or
+% baseline-pitch difference is a layout defect rather than a font-metric
+% accident.
+%
+% Reports the class-computed layout so the comparison can assert the
+% numbers the class itself decided:
+%   GEOM:tw=<textwidth>:th=<textheight>:bs=<baselineskip>:pi=<parindent>
+%        :cs=<columnsep>
+\makeatletter
+\typeout{GEOM:tw=\the\textwidth:th=\the\textheight:bs=\the\baselineskip
+  :pi=\the\parindent:cs=\the\columnsep}%
+\makeatother
+
+\section{見出しの試験}
+あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。
+あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。
+あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。
+
+\subsection{約物と欧文}
+「括弧」と句読点、そしてLatin textと数字123。中点・コロン：セミコロン；疑問符？感嘆符！
+あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。
+
+\begin{itemize}
+\item 箇条書きの第一項目である。
+\item 箇条書きの第二項目である。
+\end{itemize}
+
+本文の脚注\footnote{脚注の本文である。}を含む段落。
+あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。
+
+\newpage
+二ページ目の本文である。
+あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん。

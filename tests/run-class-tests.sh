@@ -1,0 +1,162 @@
+#!/bin/sh
+# pdftexja class-parity tests (plan §10, Verification §3).
+#
+#   sh tests/run-class-tests.sh --texmf <installed-pdftexja-tree>
+#        [--classes "pdfjarticle pdfjsarticle ..."]
+#
+# For every bundled class the SAME body (tests/fixtures/classes/
+# shared-body.tex) is typeset twice:
+#
+#   ours       : <pdftexja class> with pdfLaTeX, installed tree only
+#   reference  : the PINNED LuaTeX-ja class (ltj*/ltjs*/ltjltxdoc) with
+#                LuaLaTeX, i.e. the implementation we claim equivalence with
+#
+# and the two PDFs are compared by tests/compare-pdf.py: page count,
+# MediaBox, extracted Unicode text (whitespace-insensitive, glyph-level
+# ToUnicode), line-breaking decisions, baseline pitch and block structure.
+# Additionally the layout numbers each class computes itself are compared
+# verbatim (GEOM: line in the log), which is the class-level "same quality"
+# contract and is independent of the font outlines in use.
+#
+# Exit: 0 all class pairs pass, 1 any failure, 2 usage/installation error.
+
+set -u
+
+TEXMF=""
+CLASSES=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --texmf) TEXMF=$2; shift 2 ;;
+    --texmf=*) TEXMF=${1#--texmf=}; shift ;;
+    --classes) CLASSES=$2; shift 2 ;;
+    --classes=*) CLASSES=${1#--classes=}; shift ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    *) echo "run-class-tests.sh: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ -z "$TEXMF" ]; then
+  echo "run-class-tests.sh: --texmf <installed-tree> is required" >&2; exit 2
+fi
+if [ ! -d "$TEXMF" ]; then
+  echo "run-class-tests.sh: tree does not exist: $TEXMF" >&2; exit 2
+fi
+for f in tex/latex/pdftexja/pdftexja.sty tex/latex/pdftexja/pdfjarticle.cls; do
+  if [ ! -f "$TEXMF/$f" ]; then
+    echo "run-class-tests.sh: $TEXMF lacks $f (install the package first)" >&2
+    exit 2
+  fi
+done
+
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/pdftexja-classes.XXXXXXXX") || exit 2
+trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+mkdir -p "$WORK/run" "$WORK/home" "$WORK/tmp" "$WORK/empty"
+
+stage_env() {
+  env -i PATH="$PATH" HOME="$WORK/home" TMPDIR="$WORK/tmp" \
+    LC_ALL=C.UTF-8 TZ=UTC SOURCE_DATE_EPOCH=1735689600 \
+    TEXMFHOME="$WORK/empty" TEXMFLOCAL="$WORK/empty" \
+    TEXINPUTS="$TEXMF/tex/latex//:" \
+    TEXFONTS="$TEXMF/fonts/tfm//:" \
+    TTFONTS="$TEXMF/fonts/truetype//:" \
+    ENCFONTS="$TEXMF/fonts/enc//:" \
+    "$@"
+}
+# the reference side needs the distribution's LuaTeX-ja; no installed-tree
+# paths for it beyond the normal distribution search
+ref_env() {
+  env -i PATH="$PATH" HOME="$WORK/home" TMPDIR="$WORK/tmp" \
+    LC_ALL=C.UTF-8 TZ=UTC SOURCE_DATE_EPOCH=1735689600 \
+    TEXMFHOME="$WORK/empty" TEXMFLOCAL="$WORK/empty" "$@"
+}
+
+# class pair table: <ours> <reference> <tate:0|1> [extra preamble]
+pairs() {
+  cat <<'EOF'
+pdfjarticle ltjarticle 0
+pdfjreport ltjreport 0
+pdfjbook ltjbook 0
+pdfjtarticle ltjtarticle 1
+pdfjtreport ltjtreport 1
+pdfjtbook ltjtbook 1
+pdfjsarticle ltjsarticle 0
+pdfjsreport ltjsreport 0
+pdfjsbook ltjsbook 0
+pdfjspf ltjspf 0 \title{標題}\author{著者}\date{}\def\Keywords{キーワード}\def\Email{e@x}
+pdfjskiyou ltjskiyou 0
+pdfjltxdoc ltjltxdoc 0
+EOF
+}
+
+FAILED=0
+PASSED=0
+SKIPPED=0
+
+while read -r ours ref tate extra; do
+  [ -n "${ours:-}" ] || continue
+  case " ${CLASSES:-all} " in
+    *" all "*|*" $ours "*) ;;
+    *) continue ;;
+  esac
+  dir="$WORK/run/$ours"
+  mkdir -p "$dir"
+  cp "$REPO/tests/fixtures/classes/shared-body.tex" "$dir/body.tex"
+
+  printf '\\documentclass%s{%s}\n%s\n\\begin{document}\n\\input{body}\n\\end{document}\n' \
+    "$([ "$tate" = 1 ] && echo '[tate]')" "$ours" "$extra" > "$dir/ours.tex"
+  printf '\\documentclass%s{%s}\n%s\n\\begin{document}\n\\input{body}\n\\end{document}\n' \
+    "$([ "$tate" = 1 ] && echo '[tate]')" "$ref" "$extra" > "$dir/ref.tex"
+
+  if ! ( cd "$dir" && stage_env pdflatex -no-shell-escape -recorder \
+           -interaction=nonstopmode -halt-on-error ours.tex >ours.log 2>&1 ); then
+    echo "FAIL: $ours: compile"; tail -15 "$dir/ours.log" >&2
+    FAILED=$((FAILED + 1)); continue
+  fi
+  if ! ( cd "$dir" && ref_env lualatex -no-shell-escape -recorder \
+           -interaction=nonstopmode -halt-on-error ref.tex >ref.log 2>&1 ); then
+    echo "SKIP: $ours: reference $ref does not compile here"
+    SKIPPED=$((SKIPPED + 1)); continue
+  fi
+
+  # (1) class-level layout numbers must agree verbatim
+  ga=$(sed -n 's/^GEOM:\(.*\)$/\1/p' "$dir/ours.log" | head -1)
+  gb=$(sed -n 's/^GEOM:\(.*\)$/\1/p' "$dir/ref.log" | head -1)
+  if [ -z "$ga" ] || [ -z "$gb" ]; then
+    echo "FAIL: $ours: GEOM probe missing (ours='$ga' ref='$gb')"
+    FAILED=$((FAILED + 1)); continue
+  fi
+  geom_ok=1
+  IFS=':' read -r twa tha bsa pia csa <<EOF
+$ga
+EOF
+  IFS=':' read -r twb thb bsb pib csb <<EOF
+$gb
+EOF
+  for pair in "$twa $twb" "$tha $thb" "$bsa $bsb" "$pia $pib"; do
+    set -- $pair
+    awk -v a="${1%pt}" -v b="${2%pt}" \
+      'BEGIN { d = a - b; if (d < 0) d = -d; exit (d > 0.03) }' || geom_ok=0
+  done
+  if [ "$geom_ok" = 1 ]; then
+    echo "PASS: $ours: class geometry matches $ref ($ga)"
+  else
+    echo "FAIL: $ours: class geometry ours($ga) vs ref($gb)"
+    FAILED=$((FAILED + 1)); continue
+  fi
+
+  # (2) PDF-level parity
+  if python3 "$REPO/tests/compare-pdf.py" "$dir/ours.pdf" "$dir/ref.pdf" "$ours" \
+       $([ "$tate" = 1 ] && echo --tate); then
+    PASSED=$((PASSED + 1))
+  else
+    FAILED=$((FAILED + 1))
+  fi
+done <<EOF
+$(pairs)
+EOF
+
+echo
+echo "== class parity summary: $PASSED passed, $FAILED failed, $SKIPPED skipped =="
+[ "$FAILED" -eq 0 ] || exit 1
+exit 0
