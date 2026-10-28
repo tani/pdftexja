@@ -124,6 +124,16 @@ fonts_have() {
   fi
 }
 
+# every listed font must be embedded (no metric-only substitutes)
+fonts_embedded() {
+  if ( cd "$WORK/run" && stage_env pdffonts "$1.pdf" 2>/dev/null ) \
+       | awk 'NR>2 { if ($(NF-4) != "yes") bad=1 } END { exit bad }'; then
+    pass "$1: all fonts embedded"
+  else
+    fail "$1: some font is not embedded"
+  fi
+}
+
 # ---------------------------------------------------------------- fixtures
 cp "$REPO/tests/fixtures/foundation/standalone-yoko.tex" "$WORK/run/"
 cp "$REPO/tests/fixtures/foundation/standalone-tate.tex" "$WORK/run/"
@@ -141,8 +151,8 @@ if compile standalone-yoko 2; then
   pdftext_has standalone-yoko '割注'
   pdftext_absent standalone-yoko '??'
   pdftext_absent standalone-yoko $'\xef\xbf\xbd'
-  fonts_have standalone-yoko 'IPAexMincho'
-  fonts_have standalone-yoko 'IPAexGothic'
+  fonts_have standalone-yoko 'IMFCTT1'
+  fonts_embedded standalone-yoko
 else
   fail "standalone-yoko: compile"
 fi
@@ -156,7 +166,7 @@ if compile standalone-tate 2; then
   pdftext_has standalone-tate '縦組の見出し'
   pdftext_has standalone-tate '脚注の本文'
   pdftext_has standalone-tate '二ページ目'
-  fonts_have standalone-tate 'IPAexMincho'
+  fonts_have standalone-tate 'IMFCTT1'
   # two pages, page 2 recovered (not stuck in tate-rotation bookkeeping)
   pages=$( ( cd "$WORK/run" && stage_env pdfinfo standalone-tate.pdf 2>/dev/null ) \
              | awk '/^Pages:/{print $2}' )
@@ -182,7 +192,7 @@ cat >"$WORK/run/metrics-purity.tex" <<'EOF'
 \setbox0\hbox{あ}\wb=\wd0
 \typeout{METRICSPURITY:wd=\the\wa/\the\wb:gw=\the\ga:gh=\the\gb:gd=\the\gc}
 \ifdim\wa=\wb \typeout{METRICSPURITY:pure=yes}\else\typeout{METRICSPURITY:pure=no}\fi
-\ifpdftexjaIfDirectionTF{yoko}{\typeout{METRICSPURITY:dir=yoko}}{\typeout{METRICSPURITY:dir=tate}}\fi
+\pdftexjaIfDirectionTF{yoko}{\typeout{METRICSPURITY:dir=yoko}}{\typeout{METRICSPURITY:dir=tate}}
 \end{document}
 EOF
 if compile metrics-purity 1; then
@@ -279,6 +289,11 @@ return function(base_dir)
     [201] = { chars = {"parbdd"} },
     [202] = { chars = {"boxbdd"} },
   }
+  -- the descriptor must carry both directions; only the yoko widths are
+  -- asserted, so the tate record reuses the metrics with dir flipped
+  local tate = {}
+  for k, v in pairs(t) do tate[k] = v end
+  tate.dir = "tate"
   return {
     format = 1, id = "tiny", composition = "single",
     boundary_semantics = "jfm", character_semantics = "jfm",
@@ -289,7 +304,7 @@ return function(base_dir)
         prebreak = { [34] = 10000 }, postbreak = {}, xspacing = {},
         fullwidth_space_adjust = {}, family_identity = { mc = "tiny", gt = "tiny" } },
       { id = "base", dir = "tate", open_bracket_pos = "zenkaku_tentsuki",
-        hanging_punctuation = false, jfm = t,
+        hanging_punctuation = false, jfm = tate,
         roles = { normal = 17, latin = 83, paragraph = 201, box = 202 },
         prebreak = { [34] = 10000 }, postbreak = {}, xspacing = {},
         fullwidth_space_adjust = {}, family_identity = { mc = "tiny", gt = "tiny" } },
