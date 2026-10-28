@@ -332,13 +332,18 @@
   %      remaining body, not the document's follower (measured:
   %      \futurelet before the trailing assignments saw \global and
   %      mis-dispatched).
+  %      The lookahead cs is PRIVATE to this peek (R15 invariant, see
+  %      pdftexja-rules.sty): when the follower is a conditional
+  %      terminator the cs becomes an alias of the \fi primitive, and a
+  %      SHARED name would be read as \fi by TeX's conditional skipper
+  %      inside any later skipped branch.
   \global\pdftexja@dir=\pdftexja@ruby@savedir
   \ifmmode
     \expandafter\@gobble
   \else
     \expandafter\pdftexja@ruby@rpeek@do
   \fi}
-\def\pdftexja@ruby@rpeek@do{\futurelet\pdftexja@next\pdftexja@ruby@rpeek}
+\def\pdftexja@ruby@rpeek@do{\futurelet\pdftexja@ruby@rpeek@next\pdftexja@ruby@rpeek}
 
 %. ------------------------------------------- the boundary emission
 % ONE emission via the shared evaluator, driven by the recorded base
@@ -429,27 +434,27 @@
 % marker after the glue so \lastkern keeps the value consecutive
 % rubies are detected by.
 \def\pdftexja@ruby@rpeek{%
-  \ifx\pdftexja@next\@sptoken
+  \ifx\pdftexja@ruby@rpeek@next\@sptoken
     % explicit space: neutral (the plain machinery's 93 semantics)
     \global\pdftexja@lastclass=93
   \else
-    \ifx\pdftexja@next\egroup
+    \ifx\pdftexja@ruby@rpeek@next\egroup
       % group end: resume the peek after the group closes (the same
       % pattern the plain machinery's peek uses; a CJK follower
       % emits through its own glyph hook either way -- this only
       % matters for a latin/math follower right after the group)
       \aftergroup\pdftexja@ruby@rpeek@do
     \else
-      \ifx\pdftexja@next$%
+      \ifx\pdftexja@ruby@rpeek@next$%
         \pdftexja@ruby@rlat
       \else
-        \ifx\pdftexja@next\pdftexja@tate@dollar@cmp
+        \ifx\pdftexja@ruby@rpeek@next\pdftexja@tate@dollar@cmp
           \pdftexja@ruby@rlat
         \else
-          \ifcat\noexpand\pdftexja@next a%
+          \ifcat\noexpand\pdftexja@ruby@rpeek@next a%
             \pdftexja@ruby@rlat
           \else
-            \ifcat\noexpand\pdftexja@next 1%
+            \ifcat\noexpand\pdftexja@ruby@rpeek@next 1%
               \pdftexja@ruby@rlat
             \else
               % CJK bytes, control sequences: the follower's own hook

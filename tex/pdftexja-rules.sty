@@ -1190,8 +1190,22 @@
 % この形は避ける: 「\ifmmode\else\futurelet..\fi」形は CJKutf8 の \CJK@XXX 末尾条件
 % （\expandafter\CJK@ignorespaces\else..\fi\fi の残り \fi 群内）で展開され
 % ると壊れる: \else スキップで消えたはずの \pdftexja@peek@a が古い
-% \pdftexja@next で実行され，\CJK@XXX 末尾の \fi 群と突いて Extra \fi
+% \pdftexja@peek@next で実行され，\CJK@XXX 末尾の \fi 群と突いて Extra \fi
 % （再現条件: 直前に和文がある状態の $あ$ / 行列セル内和文）．
+% R15 INVARIANT: the lookahead cs must be PRIVATE to the peek machinery
+% (\pdftexja@peek@next, never a name another module also assigns).  When a
+% branch ends in a CJK glyph, \futurelet<cs>\pdftexja@peek@a takes the
+% caller's \fi as <token2>, so <cs> becomes an alias of the \fi primitive
+% and stays so.  TeX's conditional skipper (pass_over) recognises ANY token
+% whose meaning is a conditional: if shared code later mentions <cs> inside
+% a branch that TeX is skipping -- e.g. the `\let\...@next\@firstoftwo' in
+% \pdftexjaIfDirectionTF's own skipped true branch -- the skipper reads it
+% as \fi, closes a nesting level early, skips BOTH branches and leaves the
+% caller's \fi unmatched ("Extra \fi"; minimal: two \today calls in one
+% document).  A private name makes the stale alias unreadable elsewhere,
+% and unlike a lookahead fence it leaves the token stream and node stream
+% byte-identical for every follower, so ruby's aftergroup ordering and the
+% pdfjsbook/pdfjspf line counts are untouched.
 % 未来let本体を\elseスキップ域の外へ出し，数式時は引数ごと捨てる
 % \@gobble イディオムに変える（引数形なのでスキップ域に未来letが残らない）．
 \def\pdftexja@peek{%
@@ -1217,7 +1231,7 @@
 \def\pdftexja@peek@resume{\pdftexja@peek}
 % 非数式モードのときだけ実行される本体．
 \def\pdftexja@peek@do{%
-  \futurelet\pdftexja@next\pdftexja@peek@a
+  \futurelet\pdftexja@peek@next\pdftexja@peek@a
 }
 % CJK -> latin/math boundary: emit through the unified machinery with
 % curclass=27 (the inhibit interlock is consumed here too --
@@ -1230,7 +1244,7 @@
 }
 
 \def\pdftexja@peek@a{%
-  \ifx\pdftexja@next\inhibitglue
+  \ifx\pdftexja@peek@next\inhibitglue
     % \inhibitglue directly after a CJK glyph: consume it, execute it
     % (sets the interlock) and re-peek at the REAL follower, so a
     % latin follower goes through peek@lat -- which consumes the
@@ -1250,33 +1264,23 @@
   \fi
 }
 \def\pdftexja@peek@ig{\pdftexja@eatig}
-% (R15 lead -- DO NOT re-apply blindly: supplying an explicit <token2>
-% fence (\futurelet<cs>\A\B with \B an empty macro) stops the caller's
-% \fi from being re-pushed into peek@a's conditional region and fixes the
-% date gates, but it shifts one line in pdfjsbook/pdfjspf page 1 and
-% breaks both ruby gates.  The mechanism is recorded in PLAN.md; the fix
-% must address the ruby ordering at the same time.)
-% \pdftexja@peek@fence: the lookahead FENCE.  \futurelet<cs><A><B> assigns
-% <cs> the token AFTER <B> and pushes <A><B> back.  Called with only one
-% token (the historical form) the next INPUT token becomes <B> and is
-% pushed back out of its context: when that token was the CALLER's \fi it
-% re-entered the stream inside peek@a's own conditional region and closed
-% the caller's \if... one level early (measured: two \today calls in one
-% document -> "Extra \fi"/"Extra \else" on the second call, when the first
-% date branch ended in a CJK glyph).  Supplying an explicit <B> keeps the
-% caller's token stream untouched; the fence itself is a no-op \relax.
-\def\pdftexja@peek@fence{}
+% (R15 closed: the lookahead fence -- \futurelet<cs>\A\B with \B an empty
+% macro -- also stopped the caller's \fi from being re-pushed, but it put an
+% extra token into the stream: one line shifted in pdfjsbook/pdfjspf page 1
+% and both ruby gates failed.  The shared-cs alias described in the R15
+% INVARIANT above was the actual defect; the fence was removed and is not
+% coming back -- do not reintroduce it.)
 % eat the lookahead'd \inhibitglue token, execute it, re-peek at the
 % real follower (taking it as an argument CONSUMES the token: a plain
 % token insertion looped forever on the never-consumed original)
 \def\pdftexja@eatig#1{#1\pdftexja@peek}
 \def\pdftexja@peek@rest{%
-  \ifx\pdftexja@next\@sptoken
+  \ifx\pdftexja@peek@next\@sptoken
     % explicit space: neutral (ltj's glue pseudo-char: no boundary
     % glue across a user space)
     \global\pdftexja@lastclass=93
   \else
-    \ifx\pdftexja@next\egroup
+    \ifx\pdftexja@peek@next\egroup
       % group end: resume the peek after the group.
       % The resume macro (not \pdftexja@peek itself) first checks
       % whether the group that closed was a BOX (\lastnodetype 13/14
@@ -1289,7 +1293,7 @@
       % resumed peek proceeds there exactly as before.
       \aftergroup\pdftexja@peek@resume
     \else
-      \ifx\pdftexja@next$%
+      \ifx\pdftexja@peek@next$%
         \pdftexja@peek@lat
       \else
         % tate では $ はアクティブ文字になる（pdftexja.sty の数式
@@ -1297,13 +1301,13 @@
         % \pdftexja@tate@dollar@cmp と一致するため，その \ifx で捕える．
         % 横組みでは \pdftexja@tate@dollar@cmp は未定義のままで，
         % この枝は常に偽（既存挙動と一致）．
-        \ifx\pdftexja@next\pdftexja@tate@dollar@cmp
+        \ifx\pdftexja@peek@next\pdftexja@tate@dollar@cmp
           \pdftexja@peek@lat
         \else
-        \ifcat\noexpand\pdftexja@next a%
+        \ifcat\noexpand\pdftexja@peek@next a%
           \pdftexja@peek@lat
         \else
-          \ifcat\noexpand\pdftexja@next 1%
+          \ifcat\noexpand\pdftexja@peek@next 1%
             \pdftexja@peek@lat
           \else
             % CJK bytes, control sequences, groups: leave the state;
@@ -1692,22 +1696,22 @@
     \csname CJK@X\endcsname
   \expandafter\def\csname CJK@X\endcsname#1{%
     \pdftexja@latadj\csname pdftexja@orig@CJK@X\endcsname{#1}%
-    \futurelet\pdftexja@next\pdftexja@peek@a}%
+    \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XX\expandafter\endcsname
     \csname CJK@XX\endcsname
   \expandafter\def\csname CJK@XX\endcsname#1#2{%
     \pdftexja@latadj\csname pdftexja@orig@CJK@XX\endcsname{#1}{#2}%
-    \futurelet\pdftexja@next\pdftexja@peek@a}%
+    \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XXX\expandafter\endcsname
     \csname CJK@XXX\endcsname
   \expandafter\def\csname CJK@XXX\endcsname#1#2#3{%
     \pdftexja@latadj\csname pdftexja@orig@CJK@XXX\endcsname{#1}{#2}{#3}%
-    \futurelet\pdftexja@next\pdftexja@peek@a}%
+    \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XXXX\expandafter\endcsname
     \csname CJK@XXXX\endcsname
   \expandafter\def\csname CJK@XXXX\endcsname#1#2#3#4{%
     \pdftexja@latadj\csname pdftexja@orig@CJK@XXXX\endcsname{#1}{#2}{#3}{#4}%
-    \futurelet\pdftexja@next\pdftexja@peek@a}%
+    \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   % (d) semantic frames: PREPEND our state hook to the primitive
   %     everyhbox/everyvbox tokens (kernel's everymath-style freeze:
   %     capture the pre-existing user tokens into scratch token
