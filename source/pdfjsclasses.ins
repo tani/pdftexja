@@ -1,0 +1,16 @@
+%%
+%% pdfjsclasses.ins --- docstrip driver for the pdfjsclasses family.
+%% Ported from ltjsclasses.ins (LuaTeX-ja 20260130.1).
+%% Copyright (c) 2026 the pdftexja project
+%% SPDX-License-Identifier: BSD-2-Clause
+%%
+
+\input docstrip.tex
+\keepsilent
+\generateFile{pdfjsarticle.cls}{f}{\from{pdfjsclasses.dtx}{article}}
+\generateFile{pdfjsbook.cls}{f}{\from{pdfjsclasses.dtx}{book}}
+\generateFile{pdfjsreport.cls}{f}{\from{pdfjsclasses.dtx}{report}}
+\generateFile{pdfjspf.cls}{f}{\from{pdfjsclasses.dtx}{jspf}}
+\generateFile{pdfjskiyou.cls}{f}{\from{pdfjsclasses.dtx}{kiyou}}
+
+\endbatchfile

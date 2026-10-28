@@ -1,0 +1,244 @@
+%%
+%% This is file 'pdftexja-class.def'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% Bootstrap/helper for the BUNDLED classes only (pdfj*/pdfjs*/pdfjltxdoc).
+%% Namespace: \pdfjclass@...
+%%
+%% This file owns class-side policy that the foundation must not own:
+%%   - the pdftexja option default map used by every bundled class,
+%%   - ja-scale / fontset / fontprofile forwarding,
+%%   - the LaTeXe-2025 outputbox socket plug,
+%%   - the protected ASCII date setters and their UTF-8 registration,
+%%   - the normal-size-complete C* re-snapshot sequence,
+%%   - the tate first-line-offset derivation,
+%%   - the \hour/\minute counters and the tombow option plumbing.
+%%
+%% It re-implements no renderer, JFM or boundary state and it never
+%% touches pdftexja@ privates.  The classes load this file BEFORE their
+%% option declarations (flags and tombow plumbing) and call the
+%% \pdfjclass@... entry points after \RequirePackage{pdftexja}.
+%%
+
+\ProvidesFile{pdftexja-class.def}[2026/10/28 v0.1 pdftexja class helper]
+
+\makeatletter
+
+%. ------------------------------------------------------- option map
+% \pdfjclass@addoption{<key=value or key list>}: append to the option
+% list handed to \RequirePackage{pdftexja}.  The argument is EDEFed, so
+% resolved class switches can be passed directly.
+\def\pdfjclass@pdftexja@options{}
+\def\pdfjclass@addoption#1{%
+  \ifx\pdfjclass@pdftexja@options\@empty
+    \edef\pdfjclass@pdftexja@options{#1}%
+  \else
+    \edef\pdfjclass@pdftexja@options{\pdfjclass@pdftexja@options,#1}%
+  \fi}
+% extra keys accumulated by the class (math flags, typewriter family)
+\def\pdfjclass@extra{}
+\def\pdfjclass@addextra#1{%
+  \ifx\pdfjclass@extra\@empty
+    \edef\pdfjclass@extra{#1}%
+  \else
+    \edef\pdfjclass@extra{\pdfjclass@extra,#1}%
+  \fi}
+% fontset/fontprofile are the only class options forwarded verbatim
+% (a key=value class option loses its value before a package can see
+% it, so the class must forward it explicitly).
+\def\pdfj@opt@fontset{}
+\def\pdfj@opt@fontprofile{}
+\def\pdfjclass@collectfontkeys{%
+  \ifx\pdfj@opt@fontset\@empty\else
+    \pdfjclass@addextra{fontset=\pdfj@opt@fontset}%
+  \fi
+  \ifx\pdfj@opt@fontprofile\@empty\else
+    \pdfjclass@addextra{fontprofile=\pdfj@opt@fontprofile}%
+  \fi}
+% \pdfjclass@classoption{<CurrentOption>}: the \DeclareOption* handler.
+% fontset=<x> and fontprofile=<y> are stored; everything else is left
+% to the kernel's unused-global-option handling.
+\def\pdfjclass@classoption#1{\pdfjclass@classoption@a#1=\@nil}
+\def\pdfjclass@classoption@a#1=#2\@nil{%
+  \def\pdfjclass@tmp{#2}%
+  \ifx\pdfjclass@tmp\@empty
+    \OptionNotUsed
+  \else
+    \def\pdfjclass@tmp{#1}%
+    \def\pdfjclass@tmpa{fontset}%
+    \ifx\pdfjclass@tmp\pdfjclass@tmpa
+      \def\pdfj@opt@fontset{#2}%
+    \else
+      \def\pdfjclass@tmpa{fontprofile}%
+      \ifx\pdfjclass@tmp\pdfjclass@tmpa
+        \def\pdfj@opt@fontprofile{#2}%
+      \else
+        \OptionNotUsed
+      \fi
+    \fi
+  \fi}
+% \pdfjclass@classsetup{<ja-scale>}{<jfm>}{<direction>}{<latin-match>}{<raw key list>}:
+% the bundled-class default map.  Every class states its policy
+% explicitly; the foundation defaults are never relied upon.
+%   direction              resolved from the class's tate switch
+%   jfm                    ujis (standard/JS), min (mingoth), jis
+%                          (ptexjis), ptexmin (ptexmin option)
+%   ja-scale               0.962216 standard/doc, 0.924715 JS,
+%                          0.903375 jspf, 0.9769230 kiyou
+%   page-layout            logical: the class already computed a logical
+%                          textwidth/textheight for the physical frame
+%   latin-family-matching  false for pdfj*, true for pdfjs*
+%   bold-ja                gothic-medium (JA b/bx = gt m-series)
+%   ja-family-scope        group (bundled classes restore the family)\n% #5 is appended without expansion (provider tokens such as {\gtdefault}).
+% \pdfjclass@appendraw{<tokens>}: append WITHOUT expansion (used for
+% option values that are provider tokens, e.g. {\gtdefault}).
+\def\pdfjclass@appendraw#1{%
+  \ifx\pdfjclass@pdftexja@options\@empty
+    \def\pdfjclass@pdftexja@options{#1}%
+  \else
+    \expandafter\def\expandafter\pdfjclass@pdftexja@options
+      \expandafter{\pdfjclass@pdftexja@options,#1}%
+  \fi}
+\def\pdfjclass@classsetup#1#2#3#4#5{%
+  \pdfjclass@addoption{direction=#3}%
+  \pdfjclass@addoption{jfm=#2}%
+  \pdfjclass@addoption{ja-scale=#1}%
+  \pdfjclass@addoption{page-layout=logical}%
+  \pdfjclass@addoption{latin-family-matching=#4}%
+  \pdfjclass@addoption{bold-ja=gothic-medium}%
+  \pdfjclass@addoption{ja-family-scope=group}%
+  \pdfjclass@collectfontkeys
+  \ifx\pdfjclass@extra\@empty\else
+    \pdfjclass@addoption{\pdfjclass@extra}%
+  \fi
+  \pdfjclass@appendraw{#5}%
+  \pdfjclass@loadpdftexja}
+\def\pdfjclass@loadpdftexja{%
+  \expandafter\RequirePackage\expandafter[\pdfjclass@pdftexja@options]{pdftexja}}
+% \pdfjclass@postload{<JA-JA>}{<JA-Latin>}: run once after the
+% foundation is loaded.  Registers the date spellings, installs \today
+% and sets the class's initial spacing providers (empty = keep the
+% foundation's generic providers).
+\def\pdfjclass@postload#1#2{%
+  \pdfjclass@datesetup
+  \let\today\pdfjclass@today
+  \pdftexjaSetSpacing{#1}{#2}}
+
+%. ------------------------------------------- normal-size re-snapshot
+% \pdfjclass@snapshot{<yoko|tate>}: called at the exact point where the
+% original class measured \hbox{漢}.  It replaces that box measurement:
+% the foundation owns the JFM metrics, so the normal-role class
+% dimensions of the named direction scaled by the current Japanese size
+% are read with \pdftexjaGetMetrics, then \Chs and \Cvs are set the way
+% the original did.  No box-0 measurement is performed.
+\def\pdfjclass@snapshot#1{%
+  \pdftexjaGetMetrics{#1}{\Cht}{\Cdp}{\Cwd}%
+  \Chs=\Cwd
+  \Cvs=\baselineskip}
+% tate classes: the rotated galley loses (topskip - Cdp) of leading;
+% the class measures it here, while the C* snapshot is valid, and hands
+% the value to the foundation as the page-level first-line-offset.
+\def\pdfjclass@firstlineoffset{%
+  \pdftexjasetup{first-line-offset={\Cdp-\topskip}}}
+
+%. ------------------------------------------- time and tombow plumbing
+% \hour/\minute: declare locally only when the engine does not provide
+% them (pLaTeX declares them; pdfLaTeX does not).
+\@ifundefined{hour}{\newcount\hour}{}
+\@ifundefined{minute}{\newcount\minute}{}
+\hour\time \divide\hour by 60\relax
+\@tempcnta\hour \multiply\@tempcnta 60\relax
+\minute\time \advance\minute-\@tempcnta
+% The class keeps the crop OPTION POLICY; the transport lives in
+% pdftexja-paper and the policy in pdftexja-class-crop.def.
+\newif\iftombow \tombowfalse
+\newif\iftombowdate \tombowdatetrue
+\newdimen\@tombowwidth \@tombowwidth=.1\p@
+\def\pdfjclass@bannertoken{}
+\long\def\@bannertoken#1{\gdef\pdfjclass@bannertoken{#1}}
+\def\@tombowbleed{3mm}
+
+%. ------------------------------------------------------- date policy
+% The class owns the era table and \today.  The UTF-8 spellings are
+% registered lexically through the foundation dispatcher; the ASCII
+% setters below are the only spelling targets the foundation sees.
+\newif\ifpdfjclass@seireki \pdfjclass@seirekitrue
+\newif\ifpdfjclass@english  \pdfjclass@englishfalse
+\def\pdfjclass@seireki{\pdfjclass@seirekitrue}
+\def\pdfjclass@wareki{\pdfjclass@seirekifalse}
+\def\pdfjclass@seireki@true{\pdfjclass@seirekitrue}
+\def\pdfjclass@seireki@false{\pdfjclass@seirekifalse}
+\newcount\pdfjclass@heisei \pdfjclass@heisei\year \advance\pdfjclass@heisei-1988\relax
+\def\pdfjclass@today@year@#1{%
+  \ifnum\numexpr\year-#1=1 元\else
+    \pdftexjaIfDirectionTF{tate}{\kansuji\numexpr\year-#1\relax}%
+      {\number\numexpr\year-#1\relax\nobreak}%
+  \fi 年}
+\def\pdfjclass@today@year{%
+  \ifnum\numexpr\year*10000+\month*100+\day<19890108
+    昭和\pdfjclass@today@year@{1925}%
+  \else\ifnum\numexpr\year*10000+\month*100+\day<20190501
+    平成\pdfjclass@today@year@{1988}%
+  \else
+    令和\pdfjclass@today@year@{2018}%
+  \fi\fi}
+\def\pdfjclass@today@ja{%
+  \ifpdfjclass@seireki
+    \pdftexjaIfDirectionTF{tate}{\kansuji\year}{\number\year\nobreak}年
+  \else
+    \pdfjclass@today@year
+  \fi
+  \pdftexjaIfDirectionTF{tate}{\kansuji\month 月\kansuji\day 日}%
+    {\number\month\nobreak 月\number\day\nobreak 日}}
+\def\pdfjclass@today@en{%
+  \ifcase\month\or
+    January\or February\or March\or April\or May\or June\or
+    July\or August\or September\or October\or November\or December\fi
+    \space\number\day, \number\year}
+\def\pdfjclass@today{%
+  \ifpdfjclass@english \pdfjclass@today@en \else \pdfjclass@today@ja \fi}
+\def\pdfjclass@datesetup{%
+  \pdftexjaDeclareUTFCommand{西暦}{\pdfjclass@seireki}%
+  \pdftexjaDeclareUTFCommand{西暦true}{\pdfjclass@seireki@true}%
+  \pdftexjaDeclareUTFCommand{西暦false}{\pdfjclass@seireki@false}%
+  \pdftexjaDeclareUTFCommand{和暦}{\pdfjclass@wareki}}
+
+%. ------------------------------------------- class character spacing
+% \pdfjclass@charspacing{<HEX scalar>}{<none|pre|post|both>}: the class
+% side of the per-scalar xspacing policy.  The operation itself belongs
+% to the foundation (\pdftexjaSetCharSpacing); if the loaded foundation
+% snapshot predates it, warn once instead of breaking the class load.
+\newif\ifpdfjclass@charspacing@warned
+\def\pdfjclass@charspacing#1#2{%
+  \@ifundefined{pdftexjaSetCharSpacing}{%
+    \ifpdfjclass@charspacing@warned\else
+      \pdfjclass@charspacing@warnedtrue
+      \ClassWarningNoLine{\@currname}{%
+        this~pdftexja~has~no~\string\pdftexjaSetCharSpacing;\MessageBreak
+        the~class~character~spacing~overrides~are~not~applied}%
+    \fi
+  }{\pdftexjaSetCharSpacing{#1}{#2}}}
+
+%. ------------------------------------------- outputbox socket plug
+% LaTeXe 2025-06-01 build/column/outputbox: bottom floats, then the
+% textbottom glue when footnotes follow (pLaTeX's @makecol semantics),
+% then the footnotes.  Pre-2025 formats keep the class's stfloats /
+% fnbelowfloat branch.
+\@ifl@t@r\fmtversion{2025-06-01}{%
+  \NewSocketPlug{build/column/outputbox}{pdftexja-floats-footnotes}{%
+    \@outputbox@reinsertbskip
+    \@outputbox@attachfloats
+    \@if@footnotes@TF
+      {\@outputbox@append{\@textbottom}\let\@textbottom\relax}%
+      {}%
+    \@outputbox@appendfootnotes}%
+}{}
+
+% The helper is \input from a class file, where `@' must remain a
+% letter for the rest of the class; do not \makeatother here.
+
+\endinput

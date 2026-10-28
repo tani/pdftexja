@@ -1,0 +1,31 @@
+%%
+%% pdfjclasses.ins --- docstrip driver for the pdfjclasses family.
+%% Ported from ltjclasses.ins (LuaTeX-ja 20260130.1).
+%% Copyright (c) 2026 the pdftexja project
+%% SPDX-License-Identifier: BSD-2-Clause
+%%
+
+\input docstrip
+\keepsilent
+
+\generateFile{pdfjarticle.cls}{f}{\from{pdfjclasses.dtx}{article,yoko}}
+\generateFile{pdfjreport.cls}{f}{\from{pdfjclasses.dtx}{report,yoko}}
+\generateFile{pdfjbook.cls}{f}{\from{pdfjclasses.dtx}{book,yoko}}
+\generateFile{pdfjsize10.clo}{f}{\from{pdfjclasses.dtx}{10pt,yoko}}
+\generateFile{pdfjsize11.clo}{f}{\from{pdfjclasses.dtx}{11pt,yoko}}
+\generateFile{pdfjsize12.clo}{f}{\from{pdfjclasses.dtx}{12pt,yoko}}
+\generateFile{pdfjbk10.clo}{f}{\from{pdfjclasses.dtx}{10pt,bk,yoko}}
+\generateFile{pdfjbk11.clo}{f}{\from{pdfjclasses.dtx}{11pt,bk,yoko}}
+\generateFile{pdfjbk12.clo}{f}{\from{pdfjclasses.dtx}{12pt,bk,yoko}}
+
+\generateFile{pdfjtarticle.cls}{f}{\from{pdfjclasses.dtx}{article,tate}}
+\generateFile{pdfjtreport.cls}{f}{\from{pdfjclasses.dtx}{report,tate}}
+\generateFile{pdfjtbook.cls}{f}{\from{pdfjclasses.dtx}{book,tate}}
+\generateFile{pdfjtsize10.clo}{f}{\from{pdfjclasses.dtx}{10pt,tate}}
+\generateFile{pdfjtsize11.clo}{f}{\from{pdfjclasses.dtx}{11pt,tate}}
+\generateFile{pdfjtsize12.clo}{f}{\from{pdfjclasses.dtx}{12pt,tate}}
+\generateFile{pdfjtbk10.clo}{f}{\from{pdfjclasses.dtx}{10pt,bk,tate}}
+\generateFile{pdfjtbk11.clo}{f}{\from{pdfjclasses.dtx}{11pt,bk,tate}}
+\generateFile{pdfjtbk12.clo}{f}{\from{pdfjclasses.dtx}{12pt,bk,tate}}
+
+\endbatchfile

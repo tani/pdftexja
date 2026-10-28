@@ -1,0 +1,182 @@
+%%
+%% This is file 'pdftexja-class-crop.def'.
+%% pdftexja --- pdfLaTeX direct-PDF Japanese typesetting foundation.
+%%
+%% Copyright (c) 2026 the pdftexja project
+%% SPDX-License-Identifier: BSD-2-Clause
+%% See LICENSE for the full license text.
+%%
+%% Crop POLICY for the bundled classes (plan 7.2).  The transport itself
+%% (stock/offset registers, shipout/background provider, physical
+%% rotation, page attributes) lives in pdftexja-paper.sty; this file only
+%% decides the values and the drawing for the class's tombow options and
+%% hands them over through the public operations:
+%%
+%%   \pdftexjaSetCropStock{<W>}{<H>}{<left inset>}{<top inset>}
+%%   \pdftexjaSetCropDrawing{<tokens>}
+%%   \pdftexjaSetPageAttributes{<tokens>}
+%%   \pdftexjaClockwiseBox{<yoko body>}
+%%
+%% Policy:
+%%   none     paper size, no marks, TrimBox = MediaBox
+%%   tombow   paper + 2in stock, .1pt marks, banner
+%%   tombo    same marks, no banner
+%%   mentuke  same stock, 0pt marks, no banner
+%% Marks: bleed 3mm, corner/cross arms 10mm, the outer stroke of an edge
+%% cross is 10mm + bleed, trim origin 1in inside the stock.  The marks
+%% are physical yoko: they are drawn in the unrotated shipout/background
+%% frame, so a tate document gets upright marks.  The banner is the only
+%% rotated item (tate: 90deg clockwise along the left edge).
+%%
+%% Under usemag every absolute crop length is passed through
+%% \pdfjclass@crop@scale (= \inv@mag) exactly once: the registers are
+%% inverse-magnified so the shipped physical stock and margins are the
+%% declared ones.
+%%
+
+\ProvidesFile{pdftexja-class-crop.def}[2026/10/28 v0.1 pdftexja class crop policy]
+
+\makeatletter
+
+\def\pdfjclass@crop@bleed{3mm}
+\def\pdfjclass@crop@arm{10mm}
+% inverse-\mag factor for absolute crop lengths (1 unless usemag)
+\def\pdfjclass@crop@scale{1}
+% \pdfjclass@crop@len{<dimen>}: an absolute crop length in register units
+\def\pdfjclass@crop@len#1{%
+  \dimexpr\pdfjclass@crop@scale\dimexpr#1\relax\relax}
+% physical value in PDF points (bp) of a register dimension: \mag is
+% applied once (1000/1000 = identity for the nomag* / nomag classes),
+% then pt -> bp.
+\def\pdfjclass@crop@bp#1{%
+  \strip@pt\dimexpr0.9963\dimexpr\dimexpr#1\relax*\mag/1000\relax\relax}
+
+\newif\ifpdfjclass@crop@pending
+\def\maketombowbox{\pdfjclass@crop@pendingtrue}
+\newdimen\pdfjclass@crop@a
+\newdimen\pdfjclass@crop@b
+\newdimen\pdfjclass@crop@x
+\newdimen\pdfjclass@crop@y
+
+% picture helpers: (0,0) is the trim top-left, x right, y up, so the
+% trim rectangle is [0,\paperwidth] x [-\paperheight,0].
+\def\pdfjclass@crop@rule@h#1#2#3{%
+  \put(\strip@pt\dimexpr#1\relax,\strip@pt\dimexpr#2\relax)%
+    {\rule{\dimexpr#3\relax}{\@tombowwidth}}}
+\def\pdfjclass@crop@rule@v#1#2#3{%
+  \put(\strip@pt\dimexpr#1\relax,\strip@pt\dimexpr#2\relax)%
+    {\rule{\@tombowwidth}{\dimexpr#3\relax}}}
+
+%. ------------------------------------------------------------ marks
+% Corner marks: at each trim corner two arms of \pdfjclass@crop@arm,
+% starting \pdfjclass@crop@bleed outside the trim edge.  Edge crosses at
+% the four edge midpoints: outer arm = arm + bleed, inner arm = bleed.
+\def\pdfjclass@crop@marks{%
+  \pdfjclass@crop@a=\pdfjclass@crop@len{\pdfjclass@crop@arm}%
+  \pdfjclass@crop@b=\pdfjclass@crop@len{\pdfjclass@crop@bleed}%
+  % top-left
+  \pdfjclass@crop@rule@h{-\pdfjclass@crop@a-\pdfjclass@crop@b}{0pt}%
+    {\pdfjclass@crop@a}%
+  \pdfjclass@crop@rule@v{0pt}{\pdfjclass@crop@b}{\pdfjclass@crop@a}%
+  % top-right
+  \pdfjclass@crop@rule@h{\paperwidth+\pdfjclass@crop@b}{0pt}%
+    {\pdfjclass@crop@a}%
+  \pdfjclass@crop@rule@v{\paperwidth}{\pdfjclass@crop@b}{\pdfjclass@crop@a}%
+  % bottom-left
+  \pdfjclass@crop@rule@h{-\pdfjclass@crop@a-\pdfjclass@crop@b}{-\paperheight}%
+    {\pdfjclass@crop@a}%
+  \pdfjclass@crop@rule@v{0pt}{-\paperheight-\pdfjclass@crop@a-\pdfjclass@crop@b}%
+    {\pdfjclass@crop@a}%
+  % bottom-right
+  \pdfjclass@crop@rule@h{\paperwidth+\pdfjclass@crop@b}{-\paperheight}%
+    {\pdfjclass@crop@a}%
+  \pdfjclass@crop@rule@v{\paperwidth}%
+    {-\paperheight-\pdfjclass@crop@a-\pdfjclass@crop@b}{\pdfjclass@crop@a}%
+  % top edge cross
+  \pdfjclass@crop@rule@v{.5\paperwidth}{-\pdfjclass@crop@b}%
+    {\pdfjclass@crop@a+2\pdfjclass@crop@b}%
+  % bottom edge cross
+  \pdfjclass@crop@rule@v{.5\paperwidth}%
+    {-\paperheight-\pdfjclass@crop@a-\pdfjclass@crop@b}%
+    {\pdfjclass@crop@a+2\pdfjclass@crop@b}%
+  % left edge cross
+  \pdfjclass@crop@rule@h{-\pdfjclass@crop@a-\pdfjclass@crop@b}{-.5\paperheight}%
+    {\pdfjclass@crop@a+2\pdfjclass@crop@b}%
+  % right edge cross
+  \pdfjclass@crop@rule@h{\paperwidth-\pdfjclass@crop@b}{-.5\paperheight}%
+    {\pdfjclass@crop@a+2\pdfjclass@crop@b}%
+  \ifpdfjclass@crop@banner \pdfjclass@crop@banner \fi}
+
+%. ----------------------------------------------------------- banner
+% \jobname (YYYY-MM-DD HH:MM) from the class's \@bannertoken; yoko along
+% the bottom bleed margin, tate rotated 90deg clockwise along the left
+% bleed margin.
+\newif\ifpdfjclass@crop@banner
+\def\pdfjclass@crop@bannertext{%
+  {\ttfamily\fontsize{8}{9}\selectfont\pdfjclass@bannertoken}}
+\def\pdfjclass@crop@banner{%
+  \pdftexjaIfDirectionTF{tate}%
+    {\put(-\pdfjclass@crop@len{\pdfjclass@crop@bleed},-.5\paperheight)%
+       {\pdftexjaClockwiseBox{\pdfjclass@crop@bannertext}}}%
+    {\put(0pt,-\paperheight-\pdfjclass@crop@len{\pdfjclass@crop@bleed})%
+       {\pdfjclass@crop@bannertext}}}
+
+%. --------------------------------------------------- page attributes
+% TrimBox always; BleedBox for the crop-mark options.  All values are
+% physical PDF points (bp), independent of the page's \mag.
+\def\pdfjclass@crop@attr@none{%
+  /TrimBox[0 0
+    \pdfjclass@crop@bp{\paperwidth}\space
+    \pdfjclass@crop@bp{\paperheight}]}
+\def\pdfjclass@crop@attr@crop{%
+  /TrimBox[\pdfjclass@crop@bp{\pdfjclass@crop@len{1in}}\space
+    \pdfjclass@crop@bp{\pdfjclass@crop@len{1in}}\space
+    \pdfjclass@crop@bp{\dimexpr\pdfjclass@crop@len{1in}+\paperwidth\relax}\space
+    \pdfjclass@crop@bp{\dimexpr\pdfjclass@crop@len{1in}+\paperheight\relax}]%
+  /BleedBox[%
+    \pdfjclass@crop@bp{\dimexpr\pdfjclass@crop@len{1in}%
+      -\pdfjclass@crop@len{\pdfjclass@crop@bleed}\relax}\space
+    \pdfjclass@crop@bp{\dimexpr\pdfjclass@crop@len{1in}%
+      -\pdfjclass@crop@len{\pdfjclass@crop@bleed}\relax}\space
+    \pdfjclass@crop@bp{\dimexpr\pdfjclass@crop@len{1in}+\paperwidth
+      +\pdfjclass@crop@len{\pdfjclass@crop@bleed}\relax}\space
+    \pdfjclass@crop@bp{\dimexpr\pdfjclass@crop@len{1in}+\paperheight
+      +\pdfjclass@crop@len{\pdfjclass@crop@bleed}\relax}]}
+
+%. ------------------------------------------------- apply the policy
+% Called by the class once, in the preamble, after the size/paper
+% options and (for usemag) the inverse paper compensation are final.
+\def\pdfjclass@crop@apply{%
+  \ifpdfjclass@crop@pending
+    \iftombow
+      \pdftexjaSetCropStock
+        {\dimexpr\paperwidth+2\pdfjclass@crop@len{1in}\relax}%
+        {\dimexpr\paperheight+2\pdfjclass@crop@len{1in}\relax}%
+        {\pdfjclass@crop@len{1in}}%
+        {\pdfjclass@crop@len{1in}}%
+      \ifdim\@tombowwidth=\z@
+        \pdfjclass@crop@bannerfalse
+      \else
+        \ifx\pdfjclass@bannertoken\@empty
+          \pdfjclass@crop@bannerfalse
+        \else
+          \pdfjclass@crop@bannertrue
+        \fi
+      \fi
+      \pdftexjaSetCropDrawing{\pdfjclass@crop@marks}%
+      \pdftexjaSetPageAttributes{\pdfjclass@crop@attr@crop}%
+    \else
+      \pdftexjaSetPageAttributes{\pdfjclass@crop@attr@none}%
+      \pdfpagewidth=\paperwidth
+      \pdfpageheight=\paperheight
+    \fi
+  \else
+    \pdftexjaSetPageAttributes{\pdfjclass@crop@attr@none}%
+    \pdfpagewidth=\paperwidth
+    \pdfpageheight=\paperheight
+  \fi}
+
+% The helper is \input from a class file, where `@' must remain a
+% letter; do not \makeatother here.
+
+\endinput
