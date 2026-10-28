@@ -509,6 +509,11 @@
   \AtBeginDocument{%
     \global\pdftexja@math@frozen@saved\expandafter{\the\frozen@everymath}%
     \global\frozen@everymath{\pdftexja@math@entry}%
+    % \endmath must BE \) so that the `\)'-delimited capture terminates for
+    % \begin{math}...\end{math}: TeX matches a delimited parameter by
+    % meaning (\ifx), so \let\endmath\) is enough and keeps \end{math}
+    % working outside a capture (where \) keeps its kernel meaning).
+    \AtBeginDocument{\ifdefined\endmath\let\endmath\)\fi}%
     % \( 差し替え（\math/\endmath = \( /\) も同経路化）
     \protected\def\({\relax\ifmmode\@badmath\else\expandafter\pdftexja@imath@paren\fi}%
   }
