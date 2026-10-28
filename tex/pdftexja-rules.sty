@@ -402,13 +402,18 @@
 %   Latin -> JA : pre of the (JA) current class
 %   JA -> Latin : post of the (JA) previous class
 \def\pdftexja@emitpair@xspc{%
+  % \pdftexja@ifxsp sets \pdftexja@xspval=1 when the permission is GRANTED
+  % (none=0, the other direction=0).  The boundary is emitted when granted;
+  % the previous revision tested `=0' and therefore SUPPRESSED every permitted
+  % boundary (measured: \hbox{漢$x$} lost its 0.25zw xkanjiskip and
+  % \pdftexjaSetCharSpacing showed inverted widths).
   \ifnum\pdftexja@lastclass=27
     \pdftexja@ifxsp{pre}{\number\pdftexja@curclass}{\number\pdftexja@cp}%
-    \ifnum\pdftexja@xspval=\z@ \pdftexja@emitpair@main \fi
+    \ifnum\pdftexja@xspval=\@ne \pdftexja@emitpair@main \fi
   \else
     \ifnum\pdftexja@curclass=27
       \pdftexja@ifxsp{post}{\number\pdftexja@lastclass}{\number\pdftexja@lastnodechar}%
-      \ifnum\pdftexja@xspval=\z@ \pdftexja@emitpair@main \fi
+      \ifnum\pdftexja@xspval=\@ne \pdftexja@emitpair@main \fi
     \else
       \pdftexja@emitpair@main
     \fi
