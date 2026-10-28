@@ -163,8 +163,11 @@
   \global\advance\pdftexja@nest1
   \setbox\pdftexja@math@probebox=\hbox{M}%
   \global\advance\pdftexja@nest-1
-  % 現JFM class 0 の h/d（zw 小数列を dimexpr で実寸化）
-  \expandafter\pdftexja@math@splitcls@i\csname pdftexja@data@\pdftexja@data@prefix @class@0\endcsname
+  % 現JFM の normal role クラスの h/d（zw 小数列を dimexpr で実寸化）。
+  % クラス番号 0 を仮定しない: descriptor の roles.normal を引く
+  % (plan §5.2. 独自 preset は normal=17 等であり得る)。
+  \pdftexja@math@loadnormal
+  \expandafter\pdftexja@math@splitcls@i\pdftexja@normcls
   \@tempdima=\pdftexja@cls@h\pdftexja@jareg   % JH
   \@tempdimb=\pdftexja@cls@d\pdftexja@jareg   % JD
   % δ_t（現方向）
@@ -216,6 +219,16 @@
   \def\pdftexja@cls@align{#4}\def\pdftexja@cls@left{#5}%
 }
 \def\pdftexja@math@splitcls@i#1{\expandafter\pdftexja@math@splitcls#1}
+% \pdftexja@normcls := the ACTIVE direction's normal-role class metrics
+% ({{w}{h}{d}{align}{left}}), or the class-0 defaults when the descriptor
+% has no such class.  Roles are descriptor data, never assumed numbers.
+\def\pdftexja@math@loadnormal{%
+  \edef\pdftexja@normcls{%
+    \expandafter\noexpand\csname pdftexja@data@\pdftexja@data@prefix @class@%
+      \csname pdftexja@jfm@role@normal\endcsname\endcsname}%
+  \expandafter\ifx\pdftexja@normcls\relax
+    \def\pdftexja@normcls{{1.000000}{0.880000}{0.120000}{middle}{0.000000}}%
+  \fi}
 
 % ---- 捕捉入り口（frozen@everymath の中身そのもの）----
 % トークン代入のみ（\edef/\xdef 禁止: \the\everymath 起点の再展開で
