@@ -287,8 +287,33 @@
 \ifdim\pdfj@magscale\p@=1.2\p@    \renewcommand{\@ptsize}{2}\else
 \renewcommand{\@ptsize}{-20}\fi\fi
 \ifpdfj@mag@xreal
-  \ifdim\pdfj@mpt=\p@\pdfj@mag@xrealfalse\fi
-\fi
+\ifdim\pdfj@mpt=\p@\pdfj@mag@xrealfalse\else
+  \expandafter\let\csname OT1/cmr/m/n/10\endcsname\relax
+  \expandafter\let\csname OMX/cmex/m/n/10\endcsname\relax
+  \@tempdima=\pdfj@magscale\p@
+  \edef\pdfj@mag@permille{\the\numexpr\@tempdima*1000/65536\relax}%
+  \def\pdfj@magnify@external@font#1 at#2 at#3\@nil{%
+     \def\@tempa{#1}\def\@tempb{#2}%
+     \ifx\@tempb\@empty
+        \edef\@tempb{ scaled\pdfj@mag@permille}%
+     \else
+        \dimen@\@tempb\relax
+        \edef\@tempb{ at\the\numexpr\dimen@*\pdfj@mpt/65536\relax sp}%
+     \fi
+     \edef\@tempa{\def\noexpand\external@font{\@tempa\@tempb}}%
+  }
+  \let\pdfj@orig@get@external@font=\get@external@font
+  \def\get@external@font{%
+    \dimen@=\f@size\p@
+    \edef\f@size{\strip@pt\dimexpr
+      \numexpr\dimen@*100/\pdfj@mpt\relax\p@/100\relax}%
+    \pdfj@orig@get@external@font
+    \begingroup
+      \edef\@tempa{\external@font\space at\space at}%
+      \expandafter\pdfj@magnify@external@font\@tempa\@nil
+    \expandafter\endgroup\@tempa
+  }
+\fi\fi
 \def\pdfj@smallskip{\vspace\pdfj@smallskipamount}
 \newskip\pdfj@smallskipamount
 \pdfj@smallskipamount=3\pdfj@mpt plus 1\pdfj@mpt minus 1\pdfj@mpt
@@ -676,7 +701,7 @@
         \begingroup \@svsechd \endgroup
         \unskip
         \@tempskipa #1\relax
-        \hskip -\@tempskipa\inhibitglue
+        \hskip -\@tempskipa\pdftexjaFakeParBegin
       \else
         \clubpenalty \@clubpenalty
         \everypar{}%
@@ -1213,7 +1238,7 @@ class has defined the old font commands like\MessageBreak
   \parindent 1\zw
   \noindent
   \hb@xt@\z@{\hss\@makefnmark\hskip0.3\zw}#1}
-\let\@inhibitglue=\inhibitglue
+\let\@inhibitglue=\pdftexjaFakeParBegin
 \def\@item[#1]{%
   \if@noparitem
     \@donoparitem
@@ -1256,7 +1281,7 @@ class has defined the old font commands like\MessageBreak
     \else
       \clubpenalty \@clubpenalty
       \everypar{}%
-    \fi\inhibitglue}%
+    \fi\pdftexjaFakeParBegin}%
   \if@noitemarg
     \@noitemargfalse
     \if@nmbrlist
@@ -1453,7 +1478,10 @@ class has defined the old font commands like\MessageBreak
   \raggedbottom
 \fi
 \if@slide
-  \renewcommand\kanjifamilydefault{\gtdefault}
+  % ^^e5^^92^^8c^^e6^^96^^87^^e3^^81^^ae^^e6^^97^^a2^^e5^^ae^^9a family ^^e3^^81^^af pTeX/LuaTeX-ja ^^e3^^81^^ae \kanjifamilydefault ^^e3^^81^^a7^^e3^^81^^af^^e3^^81^^aa^^e3^^81^^8f
+  % bxcjkjatype ^^e3^^81^^ae \setCJKfamilydefault ^^e3^^81^^8c^^e6^^8c^^81^^e3^^81^^a4^^ef^^bc^^88pdftexja ^^e3^^81^^ae \normalfont ^^e3^^81^^af
+  % \CJKfamily{} ^^e3^^81^^a7^^e3^^81^^93^^e3^^81^^ae^^e6^^97^^a2^^e5^^ae^^9a^^e3^^81^^ab^^e6^^88^^bb^^e3^^82^^8b^^ef^^bc^^89^^e3^^80^^82
+  \@ifundefined{setCJKfamilydefault}{}{\setCJKfamilydefault{\gtdefault}}
   \renewcommand\familydefault{\sfdefault}
   \raggedright
   \@tempskipb=.1em

@@ -865,16 +865,45 @@
 % 実際にはオプティカルサイズの補正が不要なときは「|xreal|オプションは指定されなかった」という
 % 扱いにしておきます。
 %    \begin{macrocode}
-% pdfTeX 実装（計画 §7.1）:
-%   nomag*  既定。\mag=1000。optical size の補正は NFSS と本クラスの
-%           size ladder（\@setfontsize に渡す実寸）が供給する。
-%           Lua の get@external@font パッチは LuaTeX 専用のため移植しない。
+% pdfTeX 実装:
+%   nomag*  既定。\mag=1000。原実装の Lua による get@external@font
+%           パッチを \numexpr で移植する: 外部フォント名の決定（NFSS の
+%           size 表の参照）は \f@size を拡大率で割った「拡大前の」サイズで
+%           行い，読み込みサイズ（at / scaled）だけを拡大率倍する。
+%           拡大前のサイズは 0.01pt に丸める（原実装は sp 単位の誤差が
+%           残り，例えば 10.95pt/1.095 が 9.99998pt になって OT1/cmr の
+%           <9-10> 区間（cmr9）を選んでしまうため）。
 %   nomag   \mag=1000、補正なし（xreal フラグを落とす）。
 %   usemag  上で \mag を設定済み。\mag が出荷時に拡大するので補正不要。
 % 10pt で補正が不要な場合は xreal を落とす（原実装と同じ扱い）。
 \ifpdfj@mag@xreal
-  \ifdim\pdfj@mpt=\p@\pdfj@mag@xrealfalse\fi
-\fi
+\ifdim\pdfj@mpt=\p@\pdfj@mag@xrealfalse\else
+  \expandafter\let\csname OT1/cmr/m/n/10\endcsname\relax
+  \expandafter\let\csname OMX/cmex/m/n/10\endcsname\relax
+  \@tempdima=\pdfj@magscale\p@
+  \edef\pdfj@mag@permille{\the\numexpr\@tempdima*1000/65536\relax}%
+  \def\pdfj@magnify@external@font#1 at#2 at#3\@nil{%
+     \def\@tempa{#1}\def\@tempb{#2}%
+     \ifx\@tempb\@empty
+        \edef\@tempb{ scaled\pdfj@mag@permille}%
+     \else
+        \dimen@\@tempb\relax
+        \edef\@tempb{ at\the\numexpr\dimen@*\pdfj@mpt/65536\relax sp}%
+     \fi
+     \edef\@tempa{\def\noexpand\external@font{\@tempa\@tempb}}%
+  }
+  \let\pdfj@orig@get@external@font=\get@external@font
+  \def\get@external@font{%
+    \dimen@=\f@size\p@
+    \edef\f@size{\strip@pt\dimexpr
+      \numexpr\dimen@*100/\pdfj@mpt\relax\p@/100\relax}%
+    \pdfj@orig@get@external@font
+    \begingroup
+      \edef\@tempa{\external@font\space at\space at}%
+      \expandafter\pdfj@magnify@external@font\@tempa\@nil
+    \expandafter\endgroup\@tempa
+  }
+\fi\fi
 %    \end{macrocode}
 %
 % [2016-11-16] latex.ltx (ltspace.dtx)で定義されている |\smallskip| の，
@@ -2805,7 +2834,7 @@
         \begingroup \@svsechd \endgroup
         \unskip
         \@tempskipa #1\relax
-        \hskip -\@tempskipa\inhibitglue
+        \hskip -\@tempskipa\pdftexjaFakeParBegin
       \else
         \clubpenalty \@clubpenalty
         \everypar{}%
@@ -5209,7 +5238,8 @@
 % |\item| 命令の直後です。
 %
 %    \begin{macrocode}
-\let\@inhibitglue=\inhibitglue
+% pdftexja では |\ltjfakeparbegin| に当たる |\pdftexjaFakeParBegin| を使います。
+\let\@inhibitglue=\pdftexjaFakeParBegin
 \def\@item[#1]{%
   \if@noparitem
     \@donoparitem
@@ -5252,7 +5282,7 @@
     \else
       \clubpenalty \@clubpenalty
       \everypar{}%
-    \fi\inhibitglue}%
+    \fi\pdftexjaFakeParBegin}%
   \if@noitemarg
     \@noitemargfalse
     \if@nmbrlist
@@ -5656,7 +5686,10 @@
   \raggedbottom
 \fi
 \if@slide
-  \renewcommand\kanjifamilydefault{\gtdefault}
+  % 和文の既定 family は pTeX/LuaTeX-ja の \kanjifamilydefault ではなく
+  % bxcjkjatype の \setCJKfamilydefault が持つ（pdftexja の \normalfont は
+  % \CJKfamily{} でこの既定に戻る）。
+  \@ifundefined{setCJKfamilydefault}{}{\setCJKfamilydefault{\gtdefault}}
   \renewcommand\familydefault{\sfdefault}
   \raggedright
   \@tempskipb=.1em

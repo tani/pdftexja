@@ -518,6 +518,73 @@ else
   tail -6 "$WORK/run/csp-group.log" >&2
 fi
 
+# --- R6b: latin adjacency mid-paragraph ----------------------------------
+# A latin run the post-glyph peek cannot see (after a space, behind a
+# control sequence or a text font command, a ligature, inline \(..\)) must
+# still produce the JA<->Latin boundary, and the per-scalar permission
+# (\pdftexjaSetCharSpacing, here ！ = post only) must apply there.  All
+# assertions are width DIFFERENCES against the box-head / direct-follower
+# reference boundaries, so they do not depend on the font metrics.  No
+# false positives: `漢\relax漢', `漢\kern1pt漢' and a ruby followed by a
+# kanji (CJK.sty's 1sp marker kern after a box) keep the JA-JA pair.
+check
+cat >"$WORK/run/r6b.tex" <<'EOF'
+\documentclass{article}
+\usepackage[jfm=pdftexja-jfm-ujis.def]{pdftexja}
+\usepackage{ruby}
+\pdftexjaSetCharSpacing{FF01}{post}
+\newcommand\W[2]{\setbox0\hbox{#2}\typeout{R6B:#1=\the\wd0}}
+\begin{document}
+\W{K}{漢}\W{KK}{漢漢}\W{A}{A}\W{bA}{\textbf{A}}\W{x}{$x$}
+\W{Bang}{！}
+\W{AK}{A漢}\W{KA}{漢A}
+\W{KsA}{漢 A}\W{KsAK}{漢 A漢}
+\W{KrA}{漢\relax A}\W{KrAK}{漢\relax A漢}
+\W{KbA}{漢\textbf{A}}\W{KbAK}{漢\textbf{A}漢}
+\W{Ksfi}{漢 fi}\W{KsfiK}{漢 fi漢}
+\W{KpxK}{漢\(x\)漢}
+\W{KrK}{漢\relax 漢}\W{KkK}{漢\kern1pt 漢}
+\W{KsABang}{漢 A！}
+\W{R}{\ruby{漢}{かん}}\W{RK}{\ruby{漢}{かん}漢}
+\end{document}
+EOF
+if ( cd "$WORK/run" && stage_env pdflatex -no-shell-escape -interaction=nonstopmode \
+       -halt-on-error r6b.tex >r6b.log 2>&1 ); then
+  if r6b_out=$(python3 - "$WORK/run/r6b.log" <<'PY'
+import re, sys
+w = {k: float(v) for k, v in re.findall(r"R6B:(\w+)=(-?[0-9.]+)pt",
+                                        open(sys.argv[1], errors="replace").read())}
+la = w["AK"] - w["A"] - w["K"]      # Latin->JA at a box head
+jl = w["KA"] - w["K"] - w["A"]      # JA->Latin directly after a glyph
+bad = []
+def eq(name, got, want):
+    if abs(got - want) > 0.0005:
+        bad.append("%s %.5f (want %.5f)" % (name, got, want))
+if la <= 0 or jl <= 0:
+    bad.append("reference boundaries not positive (LA %.5f JL %.5f)" % (la, jl))
+eq("space", w["KsAK"] - w["KsA"] - w["K"], la)
+eq("relax", w["KrAK"] - w["KrA"] - w["K"], la)
+eq("textbf-JL", w["KbA"] - w["K"] - w["bA"], jl)
+eq("textbf-LA", w["KbAK"] - w["KbA"] - w["K"], la)
+eq("ligature", w["KsfiK"] - w["Ksfi"] - w["K"], la)
+eq("math", w["KpxK"] - 2 * w["K"] - w["x"], jl + la)
+eq("relax-JA", w["KrK"], w["KK"])
+eq("kern-JA", w["KkK"], w["KK"] + 1.0)
+eq("post-only", w["KsABang"] - w["KsA"] - w["Bang"], 0.0)
+eq("ruby-JA", w["RK"] - w["R"] - w["K"], w["KK"] - 2 * w["K"])
+print("; ".join(bad) if bad else "LA=%.5f JL=%.5f" % (la, jl))
+sys.exit(1 if bad else 0)
+PY
+); then
+    pass "r6b: mid-paragraph latin adjacency ($r6b_out)"
+  else
+    fail "r6b: $r6b_out (log: $WORK/run/r6b.log)"
+  fi
+else
+  fail "r6b: compile"
+  tail -10 "$WORK/run/r6b.log" >&2
+fi
+
 # --- R7: UTF-8 dispatcher (U+3000, 和暦, 西暦 spellings) -----------------
 # The spellings are registered by the class helper (pdftexja-class.def) and
 # dispatched by the foundation (pdftexja-latex.sty, b86adea).  Before the fix

@@ -196,6 +196,19 @@
   % the \let restoration above is the whole policy
 \fi
 
+%. ------------------------------------------- \textmc / \textgt / \textmg
+% pLaTeX and LuaTeX-ja define these text font commands in their kernels,
+% and documents written for the j*/js* classes use them; bxcjkjatype
+% provides only the declarations (\mcfamily, \gtfamily, \mgfamily).
+\def\pdftexja@textcmd#1#2{%
+  \@ifundefined{#1}{%
+    \@ifundefined{#2}{}{%
+      \expandafter\DeclareTextFontCommand\csname #1\expandafter\endcsname
+        \expandafter{\csname #2\endcsname}}}{}}
+\pdftexja@textcmd{textmc}{mcfamily}
+\pdftexja@textcmd{textgt}{gtfamily}
+\pdftexja@textcmd{textmg}{mgfamily}
+
 %. -------------------------------------------------------- font profile
 % Vertical glyph selection / correction data source:
 %   ipaex-type1 -> pdftexja-fonts-ipaex.def

@@ -95,6 +95,7 @@ document direction.
 | `\pdftexjaSetSpacing{<JA-JA>}{<JA-Latin>}` | Set kanjiskip / xkanjiskip providers |
 | `\pdftexjaGetSpacing`, `\pdftexjaGetPairGlue` | Read the live spacing state |
 | `\pdftexjaSetCharSpacing{<HEX>}{none\|pre\|post\|both}` | Per-scalar spacing permission (preamble only). Requires a JFM descriptor with `boundary_semantics=jfm` — `ujis`, `min`, `jis`, `ptexmin`; the `standard` preset keeps the JLReq boundary evaluator and rejects it with an explicit error |
+| `\pdftexjaFakeParBegin` | Set the next CJK glyph as at a paragraph start (LuaTeX-ja `\ltjfakeparbegin`); used by the `pdfjs*` classes after list labels and run-in headings |
 | `\pdftexjaGetMetrics{<dir>}{\wd}{\ht}{\dp}` | JFM class-0 metrics (**`<w> <h> <d>` order**) |
 | `\pdftexjaMeasureLinePosition{<current>}{<remaining>}`, `\pdftexjaIfPositionKnownTF{T}{F}` | Logical line position/remaining length from `\pdfsavepos` |
 | `\pdftexjaSetCropStock` / `SetCropDrawing` / `SetPageAttributes` / `ClockwiseBox` | Crop, trim and rotation transport |

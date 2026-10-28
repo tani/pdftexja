@@ -207,6 +207,15 @@
 % the peek machinery detects). Paragraph/box/math starts re-initialize
 % the flag, so a stale token never leaks into a later paragraph.
 \protected\def\inhibitglue{\global\pdftexja@inhibit=1 }
+% \pdftexjaFakeParBegin: LuaTeX-ja's \ltjfakeparbegin.  The next CJK
+% glyph is set as at a paragraph start: the boundary state becomes the
+% paragraph-boundary class 90 (pending penalty, inhibit flag and last
+% scalar cleared), so the JFM's paragraph-start pair glue applies (e.g.
+% the indent of an opening bracket) instead of the pair with whatever
+% precedes it (a list label, a run-in heading).
+\protected\def\pdftexjaFakeParBegin{%
+  \pdftexja@state@neutral
+  \pdftexja@sfmark@set}
 % pending post-break penalty of the previous glyph (half of the unified
 % boundary penalty p = post(prev)+pre(next); the pre half is added at
 % emission time and the SAME p is applied to every legal candidate)
@@ -357,6 +366,7 @@
 % construction.
 \def\pdftexja@box@enter{%
   \ifnum\pdftexja@nest=0
+    \pdftexja@sfmark@set
     \pdftexja@box@neutralize
   \fi
 }
@@ -1109,10 +1119,26 @@
   #2=\pdftexja@getspacing
 }
 
-% Latin adjacency: when a CJK glyph is decoded at a
-% paragraph/box head (lastclass=90) directly after a LATIN run
-% (lastnodetype=0, a char node), the preceding latin text is treated
-% as class 27 so the LA->JA boundary glue (xkanjiskip) fires.
+% Latin adjacency: when a CJK glyph is decoded directly after a LATIN
+% run (lastnodetype=0 a char node, 7 a ligature, 12 the italic
+% correction \textbf{A} etc. end with) or after inline math (10), the
+% preceding material is treated as class 27 so the LA->JA boundary glue
+% (xkanjiskip) and the per-scalar xspacing permission
+% (\pdftexjaSetCharSpacing) apply.
+% The CJK->LA peek already sets 27 when a latin token DIRECTLY follows a
+% glyph; this check covers the latin runs the peek cannot see: at a
+% paragraph/box head (lastclass=90), after an explicit space
+% (lastclass=93: `漢 A漢'), and behind a control sequence or group
+% (`漢\textbf{A}漢', lastclass = the previous CJK class).
+% A char or kern node may also be OUR glyph or CJK.sty's marker kern
+% after it (`漢\relax漢', `漢\kern1pt漢'), so \spacefactor is set to the
+% mark \pdftexja@sfmark after every glyph and at every box/paragraph
+% start; any latin character typeset afterwards replaces it with its own
+% \sfcode, so "\spacefactor is not the mark" = a latin char was set since
+% (a latin char with \sfcode 0 keeps the mark and stays undetected, as
+% before).  The peek resets \spacefactor to 1000 (pTeX's
+% value after a kanji) before a following space or latin token, so
+% ordinary interword glue is unchanged.
 % The check CANNOT live in \pdftexja@pre: inside the CJK decoder the
 % font-switch whatsits make \lastnodetype read -1 there (verified by
 % probe). It runs instead at the WRAPPED \CJK@X/XX/XXX/XXXX helper
@@ -1122,12 +1148,11 @@
 % 1; empty paragraph -> the indent box or nothing; ONLY type 0 is a
 % char node = the latin run case. 空段落・indent・明示空白・glue・
 % kern・直前boxは欧文と誤判定されない。
+\mathchardef\pdftexja@sfmark=1001
 \def\pdftexja@latadj{%
   \ifnum\pdftexja@lastclass=90
-    \ifnum\lastnodetype=0
-      % direct latin adjacency at a paragraph/box head: class 27
-      \global\pdftexja@lastclass=27
-    \else
+    \pdftexja@latadj@char
+    \ifnum\pdftexja@lastclass=27 \else
       % With every glyph boxed (boxglyphs), the preceding node is
       % OUR glyph box, not a char -- the glyphmark distinguishes it
       % from a user box (boxbdd keeps user boxes neutral).
@@ -1137,8 +1162,44 @@
         \fi
       \fi
     \fi
+  \else
+    \ifnum\pdftexja@lastclass=27 \else
+      % mid-paragraph: after an explicit space (93) or a CJK glyph
+      \pdftexja@latadj@char
+    \fi
   \fi
 }
+% the preceding node is inline math (10), or a char (0), ligature (7)
+% or kern (12) set after a latin char (\spacefactor no longer holds the
+% mark): class 27.
+\def\pdftexja@latadj@char{%
+  \ifhmode
+    \ifnum\lastnodetype=10
+      \global\pdftexja@lastclass=27
+    \else
+      \ifnum\spacefactor=\pdftexja@sfmark \else
+        \ifcase\lastnodetype
+          \global\pdftexja@lastclass=27 % 0 char
+        \or\or\or\or\or\or\or
+          \global\pdftexja@lastclass=27 % 7 ligature
+        \or\or\or\or\or
+          % 12 kern, unless it is one of CJK.sty's net-zero markers
+          % (\CJK@CJK 1sp, \CJK@kern 2sp) that close CJK material set
+          % without our glyph path (\ruby: a box, so \spacefactor reads
+          % 1000 there)
+          \ifdim\lastkern>\z@
+            \ifdim\lastkern<3sp \else \global\pdftexja@lastclass=27 \fi
+          \else
+            \global\pdftexja@lastclass=27
+          \fi
+        \fi
+      \fi
+    \fi
+  \fi
+}
+% \pdftexja@sfmark@set: "no latin char since here" (glyph end, box and
+% paragraph start).
+\def\pdftexja@sfmark@set{\ifhmode \spacefactor\pdftexja@sfmark \fi}
 \def\pdftexja@pre#1{%
   \ifmmode
     % CJK char inside math: no glue, no penalty, state untouched
@@ -1231,6 +1292,7 @@
 \def\pdftexja@peek@resume{\pdftexja@peek}
 % 非数式モードのときだけ実行される本体．
 \def\pdftexja@peek@do{%
+  \pdftexja@sfmark@set
   \futurelet\pdftexja@peek@next\pdftexja@peek@a
 }
 % CJK -> latin/math boundary: emit through the unified machinery with
@@ -1238,6 +1300,7 @@
 % \inhibitglue between a CJK glyph and a latin run suppresses the
 % xkanjiskip exactly once).
 \def\pdftexja@peek@lat{%
+  \ifhmode \spacefactor\@m \fi
   {\global\pdftexja@curclass=27
    \pdftexja@emitpair}%
   \global\pdftexja@lastclass=27
@@ -1277,7 +1340,9 @@
 \def\pdftexja@peek@rest{%
   \ifx\pdftexja@peek@next\@sptoken
     % explicit space: neutral (ltj's glue pseudo-char: no boundary
-    % glue across a user space)
+    % glue across a user space); the space after a kanji is set with
+    % \spacefactor 1000 (pTeX), not with the latin-run mark
+    \ifhmode \spacefactor\@m \fi
     \global\pdftexja@lastclass=93
   \else
     \ifx\pdftexja@peek@next\egroup
@@ -1294,6 +1359,11 @@
       \aftergroup\pdftexja@peek@resume
     \else
       \ifx\pdftexja@peek@next$%
+        \pdftexja@peek@lat
+      \else
+      % LaTeX's \( opens inline math like $ (the robust command token is
+      % what follows the glyph)
+      \ifx\pdftexja@peek@next\(%
         \pdftexja@peek@lat
       \else
         % tate では $ はアクティブ文字になる（pdftexja.sty の数式
@@ -1316,10 +1386,42 @@
         \fi
         \fi
       \fi
+      \fi
     \fi
   \fi
 }
 \def\pdftexja@eatig#1{#1\pdftexja@peek}
+% \pdftexja@textcmd@peek{<text font command argument>}: see (g) at begin
+% document.  Only when the last node is a CJK glyph (\spacefactor holds
+% the mark) and the state is a CJK class; the head token of the
+% argument is looked at with a PRIVATE \futurelet name (R15) and the
+% argument copy is then discarded.  The argument is handed on only AFTER
+% every conditional has closed, so TeX's conditional skipper never scans
+% user tokens here.
+\def\pdftexja@textcmd@peek{%
+  \let\pdftexja@textcmd@do\@gobble
+  \ifhmode
+    \ifnum\spacefactor=\pdftexja@sfmark
+      \ifnum\pdftexja@lastclass=27 \else
+      \ifnum\pdftexja@lastclass=90 \else
+      \ifnum\pdftexja@lastclass=93 \else
+        \let\pdftexja@textcmd@do\pdftexja@textcmd@head
+      \fi\fi\fi
+    \fi
+  \fi
+  \pdftexja@textcmd@do}
+\def\pdftexja@textcmd@head#1{%
+  \futurelet\pdftexja@textcmd@next\pdftexja@textcmd@test#1\pdftexja@textcmd@stop}
+\def\pdftexja@textcmd@test{%
+  \ifcat\noexpand\pdftexja@textcmd@next a%
+    \pdftexja@peek@lat
+  \else
+    \ifcat\noexpand\pdftexja@textcmd@next 1%
+      \pdftexja@peek@lat
+    \fi
+  \fi
+  \pdftexja@textcmd@gobble}
+\def\pdftexja@textcmd@gobble#1\pdftexja@textcmd@stop{}
 % (peek@cont removed -- its role was "futurelet-only
 % continuation" to avoid the double hangkern, but hangkern itself is
 % gone with the old rpcode machinery; the aftergroup peek at egroup is
@@ -1705,21 +1807,25 @@
     \csname CJK@X\endcsname
   \expandafter\def\csname CJK@X\endcsname#1{%
     \pdftexja@latadj\csname pdftexja@orig@CJK@X\endcsname{#1}%
+    \pdftexja@sfmark@set
     \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XX\expandafter\endcsname
     \csname CJK@XX\endcsname
   \expandafter\def\csname CJK@XX\endcsname#1#2{%
     \pdftexja@latadj\csname pdftexja@orig@CJK@XX\endcsname{#1}{#2}%
+    \pdftexja@sfmark@set
     \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XXX\expandafter\endcsname
     \csname CJK@XXX\endcsname
   \expandafter\def\csname CJK@XXX\endcsname#1#2#3{%
     \pdftexja@latadj\csname pdftexja@orig@CJK@XXX\endcsname{#1}{#2}{#3}%
+    \pdftexja@sfmark@set
     \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XXXX\expandafter\endcsname
     \csname CJK@XXXX\endcsname
   \expandafter\def\csname CJK@XXXX\endcsname#1#2#3#4{%
     \pdftexja@latadj\csname pdftexja@orig@CJK@XXXX\endcsname{#1}{#2}{#3}{#4}%
+    \pdftexja@sfmark@set
     \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   % (d) semantic frames: PREPEND our state hook to the primitive
   %     everyhbox/everyvbox tokens (kernel's everymath-style freeze:
@@ -1741,6 +1847,18 @@
   %     line breaking). The tail kern is thus the last node before
   %     parfillskip -- the ltj insert_lineend_kern_tail position.
   \AddToHook{para/end}{\pdftexja@para@endhook}%
+  % paragraph start: no latin char yet (\pdftexja@latadj)
+  \AddToHook{para/begin}{\pdftexja@sfmark@set}%
+  % (g) CJK -> latin across a text font command (`漢\textbf{A}'): the
+  %     post-glyph peek sees \textbf, not the latin text, so it leaves
+  %     the state.  Every \DeclareTextFontCommand command (\textbf,
+  %     \textit, \emph, ...) passes its argument through \text@command
+  %     before the font switch; when the argument starts with a latin
+  %     token and the last thing set is a CJK glyph, emit the CJK->LA
+  %     boundary there.
+  \let\pdftexja@orig@text@command\text@command
+  \def\text@command#1{%
+    \pdftexja@textcmd@peek{#1}\pdftexja@orig@text@command{#1}}%
   % (f) document-start state: paragraph-boundary class, neutral scalars
   \pdftexja@state@neutral
 }
