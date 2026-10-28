@@ -1149,6 +1149,14 @@
 % char node = the latin run case. 空段落・indent・明示空白・glue・
 % kern・直前boxは欧文と誤判定されない。
 \mathchardef\pdftexja@sfmark=1001
+% A CJK character read in vertical mode must start the paragraph BEFORE
+% any boundary material or glyph box is emitted.  A bare \char starts a
+% paragraph by itself, but the boundary glue before it and every boxed
+% glyph (a narrow JFM class such as 「（ in yoko, every glyph in tate) do
+% not: they were appended to the VERTICAL list, so a paragraph beginning
+% with 「 put the bracket on a line of its own above the paragraph (and in
+% tate the first character of every such paragraph).
+\def\pdftexja@leavevmode{\ifvmode\leavevmode\fi}
 \def\pdftexja@latadj{%
   \ifnum\pdftexja@lastclass=90
     \pdftexja@latadj@char
@@ -1536,11 +1544,19 @@
 % 挿入物側は native 縦組と同じ「エム箱が行基準線を挟んで中央」の
 % 行内配置が全行(折返し行・複数段落脚注を含む)で得られる。
 \newcount\pdftexja@insctx \global\pdftexja@insctx=0
+% Along the column the rotated em box (ht+dp = 1em) is placed in the JFM
+% cell by the class align, like the vert path: left = em top at the cell
+% start, right = -(1zw-w), middle = half of it.  Full-width classes get no
+% shift; without it a half-width middle class (・ in the ujis tate data)
+% sat 0.25zw too late (measured against ltjtarticle).
 \def\pdftexja@glyph@tate@rot#1{%
   \pdftexja@tate@classdims
   % backend-internal box: guard the frame machinery
   \global\advance\pdftexja@nest1
   \setbox\pdftexja@charbox=\hbox{%
+    \pdftexja@vert@kern=\z@
+    \pdftexja@tate@alignkern
+    \ifdim\pdftexja@vert@kern=\z@\else\kern\pdftexja@vert@kern\fi
     \rotatebox{90}{\pdftexja@orig@CJKsymbol{#1}}}%
   \global\advance\pdftexja@nest-1
   \wd\pdftexja@charbox=\pdftexja@cls@w\pdftexja@zw
@@ -1560,16 +1576,41 @@
 % 90° 横倒しで刷られていた（実測: fn （ が横倒し、native と
 % 形状不一致）。rot path と同じ回転を補助字形にもかけ、
 % 回転後のボックス寸法は JFM クラスの w/h/d×zw で正規化する。
-% さらに native vf と同一の置き型として、半角クラスの全角進行
-% 字形を -(1zw-セル幅) だけ行頭側へずらして描く（uplatex 実測:
-% （ セル [c,c+0.5em] に対し ink [c,c+1em]）。
+% 字形の置き位置（列方向）: 補助縦字形の em 枠の上端（vorigin; プロ
+% ファイルの第3欄）を JFM クラスの align に従ってセルに置く。
+%   left   em 枠上端 = セル先頭（。、」）など: 字形は em の上半分）
+%   right  em 枠下端 = セル末尾、つまり -(1zw-セル幅)（「（ など）
+%   middle その中間（・）
+% \rotatebox{90} の結果は字形の TFM 高さ（ttf2tfm は字ごとの輪郭上端を
+% 書く）から始まるので、(vorigin - 高さ) を足して em 枠上端に揃える。
+% 旧実装は全クラス一律に -(1zw-セル幅) ずらし、かつ輪郭上端を基準に
+% していたため、left クラスの約物は前の字に半字以上重なっていた
+% （実測: 10pt の ltjtarticle 比で 。が約 0.5zw 先行、、は前字に隠れる）。
+\newdimen\pdftexja@vert@kern
+% \pdftexja@tate@alignkern: add the class-align offset of the em box in
+% a tate cell to \pdftexja@vert@kern (needs \pdftexja@tate@classdims).
+\def\pdftexja@tate@alignkern{%
+  \def\pdftexja@tmpb{right}%
+  \ifx\pdftexja@cls@align\pdftexja@tmpb
+    \advance\pdftexja@vert@kern
+      \dimexpr\pdftexja@cls@w\pdftexja@zw-1\pdftexja@zw\relax
+  \else
+    \def\pdftexja@tmpb{middle}%
+    \ifx\pdftexja@cls@align\pdftexja@tmpb
+      \advance\pdftexja@vert@kern
+        \dimexpr(\pdftexja@cls@w\pdftexja@zw-1\pdftexja@zw)/2\relax
+    \fi
+  \fi}
 \def\pdftexja@glyph@tate@vert#1{%
   \pdftexja@tate@classdims
   \global\advance\pdftexja@nest1
   \setbox\pdftexja@charbox=\hbox{%
-    \kern\dimexpr\pdftexja@cls@w\pdftexja@zw-1\pdftexja@zw\relax
+    \pdftexja@auxfont
+    \pdftexja@vert@kern=\dimexpr\pdftexja@vg@vorg\pdftexja@jareg
+      -\fontcharht\font\pdftexja@vg@slot\relax
+    \pdftexja@tate@alignkern
+    \kern\pdftexja@vert@kern
     \rotatebox{90}{%
-      \pdftexja@auxfont
       \expandafter\char\pdftexja@vg@slot\relax}}%
   \global\advance\pdftexja@nest-1
   \ht\pdftexja@charbox=\pdftexja@cls@h\pdftexja@zw
@@ -1806,24 +1847,28 @@
   \expandafter\let\csname pdftexja@orig@CJK@X\expandafter\endcsname
     \csname CJK@X\endcsname
   \expandafter\def\csname CJK@X\endcsname#1{%
+    \pdftexja@leavevmode
     \pdftexja@latadj\csname pdftexja@orig@CJK@X\endcsname{#1}%
     \pdftexja@sfmark@set
     \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XX\expandafter\endcsname
     \csname CJK@XX\endcsname
   \expandafter\def\csname CJK@XX\endcsname#1#2{%
+    \pdftexja@leavevmode
     \pdftexja@latadj\csname pdftexja@orig@CJK@XX\endcsname{#1}{#2}%
     \pdftexja@sfmark@set
     \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XXX\expandafter\endcsname
     \csname CJK@XXX\endcsname
   \expandafter\def\csname CJK@XXX\endcsname#1#2#3{%
+    \pdftexja@leavevmode
     \pdftexja@latadj\csname pdftexja@orig@CJK@XXX\endcsname{#1}{#2}{#3}%
     \pdftexja@sfmark@set
     \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
   \expandafter\let\csname pdftexja@orig@CJK@XXXX\expandafter\endcsname
     \csname CJK@XXXX\endcsname
   \expandafter\def\csname CJK@XXXX\endcsname#1#2#3#4{%
+    \pdftexja@leavevmode
     \pdftexja@latadj\csname pdftexja@orig@CJK@XXXX\endcsname{#1}{#2}{#3}{#4}%
     \pdftexja@sfmark@set
     \futurelet\pdftexja@peek@next\pdftexja@peek@a}%
@@ -1847,8 +1892,12 @@
   %     line breaking). The tail kern is thus the last node before
   %     parfillskip -- the ltj insert_lineend_kern_tail position.
   \AddToHook{para/end}{\pdftexja@para@endhook}%
-  % paragraph start: no latin char yet (\pdftexja@latadj)
-  \AddToHook{para/begin}{\pdftexja@sfmark@set}%
+  % paragraph start: the neutral paragraph-boundary state (class 90, no
+  % pending penalty, no inhibit) and no latin char yet (\pdftexja@latadj).
+  % \pdftexja@state@neutral was documented as the paragraph-start reset
+  % but was never hooked, so the first glyph of a paragraph was evaluated
+  % against the LAST glyph of the previous paragraph.
+  \AddToHook{para/begin}{\pdftexja@state@neutral\pdftexja@sfmark@set}%
   % (g) CJK -> latin across a text font command (`漢\textbf{A}'): the
   %     post-glyph peek sees \textbf, not the latin text, so it leaves
   %     the state.  Every \DeclareTextFontCommand command (\textbf,

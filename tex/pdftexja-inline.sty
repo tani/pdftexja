@@ -139,7 +139,11 @@
 % line-expansion rule whose height/depth are computed from the tate
 % normal cell (H,D) and the natural horizontal content width W.
 \newskip\rensujiskip
-\rensujiskip=.25\Chs plus .25\zw minus .25\zw
+% lltjext: 0.25\chs plus .25\zw minus .25\zw, where \chs is the zenkaku
+% width when lltjext is loaded (ltjtarticle: 2.40555pt plus 2.40555pt minus
+% 2.40555pt).  \Chs is not yet set when this package is loaded (the class
+% snapshots it later), so .25\Chs gave a natural width of 0pt.
+\rensujiskip=.25\zw plus .25\zw minus .25\zw
 \newbox\pdftexja@rensuji@box
 \newdimen\pdftexja@rensuji@wd
 \newdimen\pdftexja@rensuji@H
@@ -169,15 +173,30 @@
   \pdftexjaIfDirectionTF{tate}%
     {\pdftexja@rensuji@tate{#1}{#2}{#3}}%
     {\hbox{#2}}}
+% The body is set HORIZONTALLY (lltjext: \hbox to<cell>{\yoko\hss#2\hss})
+% and embedded upright through the direction factory, so the digits read
+% left to right across the column (縦中横) instead of being rotated with
+% the column like a Latin run.  The yoko box is the tate cell's cross
+% extent H+D wide, the body centred (c), flush right (r) or flush left
+% (l); along the column it advances by the body's height+depth.
 \def\pdftexja@rensuji@tate#1#2#3{%
+  % W = the natural horizontal (yoko) content width; H/D = the tate
+  % normal cell
+  \global\advance\pdftexja@nest1
+  \pdftexja@setdir{0}%
   \setbox\pdftexja@rensuji@box=\hbox{#2}%
-  % W = the natural horizontal content width; H/D = the tate normal cell
+  \pdftexja@setdir{1}%
+  \global\advance\pdftexja@nest-1
   \pdftexja@rensuji@wd=\wd\pdftexja@rensuji@box
   \pdftexjaGetMetrics{tate}\pdftexja@rensuji@unused
     \pdftexja@rensuji@H\pdftexja@rensuji@D
   \pdftexja@rensuji@alignment{#1}%
   \hskip\rensujiskip
-  \box\pdftexja@rensuji@box
+  \pdftexja@yokobox{%
+    \hbox to\dimexpr\pdftexja@rensuji@H+\pdftexja@rensuji@D\relax{%
+      \ifnum\pdfstrcmp{#1}{l}=0 \else\hss\fi
+      \box\pdftexja@rensuji@box
+      \ifnum\pdfstrcmp{#1}{r}=0 \else\hss\fi}}%
   \hskip\rensujiskip
   \ifnum#3=1 \pdftexja@rensuji@rule \fi}
 \def\pdftexja@rensuji@rule{%

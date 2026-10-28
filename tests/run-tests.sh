@@ -585,6 +585,50 @@ else
   tail -10 "$WORK/run/r6b.log" >&2
 fi
 
+# --- paragraph start: boxed glyphs must not leak into the vertical list ----
+# A CJK character read in vertical mode starts the paragraph before any
+# boundary glue or glyph box is emitted.  Before the fix, when the previous
+# paragraph ended with a space (any source line end), a paragraph that began
+# with a narrow (boxed) class such as 「 or （ in yoko, or with ANY character
+# in tate, left that glyph box on the vertical list: the bracket stood on a
+# line of its own above the paragraph.  Asserted by counting the boxes of a
+# two-paragraph vbox (must be exactly 2 lines); the fix-less tree gives 3
+# (yoko 「/（, tate 漢) and 4 (tate 「/（).
+for pdir in yoko tate; do
+check
+cat >"$WORK/run/parstart-$pdir.tex" <<'EOF'
+\documentclass{article}
+\usepackage[direction=PDIR,jfm=pdftexja-jfm-ujis.def]{pdftexja}
+\newcount\PScount
+\makeatletter
+\def\PS@strip{%
+  \ifcase\lastnodetype \or \PS@take \or \PS@take \or \or \or \or \or \or \or \or \or
+    \unskip\expandafter\PS@strip \or \unkern\expandafter\PS@strip
+    \or \unpenalty\expandafter\PS@strip \fi}
+\def\PS@take{\setbox4\lastbox\global\advance\PScount1 \PS@strip}
+\newcommand\PS[2]{\setbox0\vbox{\hsize=20\zw 一。 \par #2二三 \par}%
+  \PScount=0 \setbox2\vbox{\unvcopy0 \PS@strip}%
+  \typeout{PARSTART:#1=\the\PScount}}
+\makeatother
+\begin{document}
+\PS{kanji}{漢}\PS{kakko}{「}\PS{paren}{（}
+\end{document}
+EOF
+sed -i "s/PDIR/$pdir/" "$WORK/run/parstart-$pdir.tex"
+if ( cd "$WORK/run" && stage_env pdflatex -no-shell-escape -interaction=nonstopmode \
+       -halt-on-error "parstart-$pdir.tex" >"parstart-$pdir.log" 2>&1 ); then
+  got=$(sed -n 's/^PARSTART:\(.*\)$/\1/p' "$WORK/run/parstart-$pdir.log" | head -3 | tr '\n' ' ')
+  if [ "$got" = "kanji=2 kakko=2 paren=2 " ]; then
+    pass "parstart[$pdir]: paragraphs starting with 漢/「/（ are 2 lines"
+  else
+    fail "parstart[$pdir]: line boxes $got(want 2 each; log: $WORK/run/parstart-$pdir.log)"
+  fi
+else
+  fail "parstart[$pdir]: compile"
+  tail -10 "$WORK/run/parstart-$pdir.log" >&2
+fi
+done
+
 # --- R7: UTF-8 dispatcher (U+3000, 和暦, 西暦 spellings) -----------------
 # The spellings are registered by the class helper (pdftexja-class.def) and
 # dispatched by the foundation (pdftexja-latex.sty, b86adea).  Before the fix
