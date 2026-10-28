@@ -1060,9 +1060,12 @@
     \pdftexja@classofcp{#2}\pdftexja@evalpairglue@b=\pdftexja@evalclass
     \pdftexja@evalpairglue{\number\pdftexja@evalpairglue@a}%
                           {\number\pdftexja@evalpairglue@b}%
-    #3=\pdftexja@nat\relax
-  \expandafter\endgroup
-  \expandafter#3=\the#3\relax
+    % the value must leave the group: a local dimen assignment inside would
+    % be discarded, and reading the target register after \endgroup reads the
+    % caller's old value.
+    \xdef\pdftexja@pairglue@res{\the\pdftexja@nat}%
+  \endgroup
+  #3=\pdftexja@pairglue@res\relax
 }
 \newcount\pdftexja@evalpairglue@a
 \newcount\pdftexja@evalpairglue@b
