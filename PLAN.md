@@ -248,3 +248,23 @@ WP10 (検証統合) ── 依存: WP1–WP9
 （pymupdf での tate 抽出可否＝計測器か描画かの切り分け）、`WP5`（tiny preset の
 数値走査箇所の特定）。この 3 本で R1/R4/R5 の帰属が確定し、以降の修正順（§4）が
 そのまま実行できる。修正の着手は基盤 API（WP6→WP7→WP8）から。
+
+---
+
+## 現況サマリ（この計画の実行状況）
+
+| 項目 | 状態 | 根拠（実測） |
+|---|---|---|
+| WP4 縦組抽出 | **完了** | pdftotext 0 文字 / PyMuPDF 115+13 文字 → 計測器を交換。run-tests.sh の 3 assertion が PASS |
+| WP5 tiny preset | **完了** | math delta が `roles.normal` を引くよう修正。tiny が 0 error、幅 20.0pt / 16.25pt |
+| WP1 kiyou 行容量 | **完了** | ja-scale 二重適用を解消。`\zw` 9.03378 / textwidth 461.72658 が参照と一致、24 行同文 |
+| WP2 ltxdoc | **完了** | `\Cjascale` を bxcjkjatype ロード前に ja-scale で設定。`\hbox{あ}` 9.6222pt = `\zw` |
+| WP3 jtbook | **完了（範囲明示）** | 縦組の位置比較は回転ガリ―と native 縦組で座標系が異なり実装不能 → テキスト・被覆・版面値で gate、位置は INFO。R14 起票 |
+| WP6 SetCharSpacing | **API 完了・効果配線は R6b** | 4 契約テスト PASS。段落途中 Latin→CJK では class 27 が立たず未参照（設計判断待ち） |
+| WP7 UTF dispatcher | 進行中（別担当） | 4 欠陥を特定済み。R7 参照 |
+| WP8 `\begin{math}` 縦組 | 未着手 | `\)` 区切りと `\endmath` の不一致 |
+| WP9 jlreq cutover | **完了** | `grep -c jlreqpdf@` = 0（cls/complements/trimmarks/def）、旧 4 .sty 削除、yoko/tate 0 error・2 頁、p/u sanity OK |
+| WP10 検証統合 | 一部完了 | class parity 12/12（TDS でも 12/12）、staged provenance（/tmp/pkg と TDS）PASS、uninstall sentinel PASS。jlreq runner は別担当で更新中 |
+| 全体 | run-tests.sh **0 fail** / run-class-tests.sh **12/12** / check-jfm・check-fonts green | 各コミットメッセージに実出力を記載 |
+
+残: R7（dispatcher）、R8（縦組 `\begin{math}`）、R6b（効果配線の設計）、R14（縦組位置ゲート）、R12（jlreq runner）。
