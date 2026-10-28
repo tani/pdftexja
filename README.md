@@ -168,6 +168,22 @@ sh tests/acceptance.sh --pdftexja . --jlreq ../jlreq
 Every gate fails loudly with the measured numbers and the log path. Baselines
 are never re-recorded automatically.
 
+**TeX Live without `ipaex-type1`** (the Debian/Ubuntu `texlive-*` packages do
+not ship it): the default fontset cannot load, so the gates cannot run. Build a
+metric-identical stand-in from the installed IPAex TTFs into the staged tree
+first (needs `ttf2tfm`, `tftopl`, `pltotf` and fontTools; `cm-super` provides
+the Type 1 TS1 fonts the text comparison needs):
+
+```sh
+make install PDFTEXJA_TEXMF=<staged-texmf>
+python3 tests/make-standin-ipaex-type1.py <staged-texmf>
+```
+
+The stand-in matches the ipaex-type1 TFMs exactly (widths, heights, depths,
+font dimensions) and embeds the glyphs as TrueType under the PostScript names
+`IMFCTT1`/`IGFCTT1`. It is for testing only; never install it next to a real
+`ipaex-type1`.
+
 ## Using with jlreq
 
 `jlreq` detects the pdfTeX engine and inputs its adapter `jlreq-pdftex.def`,

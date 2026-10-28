@@ -356,6 +356,14 @@
   \global\pdftexja@math@grab=\@ne
   \pdftexja@math@scan
 }
+% The kernel's frozen $ start code counts the math nesting in
+% \@math@level only from LaTeX 2024 on (math hooks); older formats have
+% no such counter, so the replica must not reference it there.
+\ifdefined\@math@level
+  \def\pdftexja@math@levelup{\advance\@math@level\@ne}
+\else
+  \let\pdftexja@math@levelup\relax
+\fi
 \long\def\pdftexja@math@scan#1${%
   % raw box 検出（token level; wrapper 引数 {..} は1引数として不透過）
   \pdftexja@math@rawcheck{#1}%
@@ -365,7 +373,7 @@
   % 干渉して "Leaders not followed by proper glue" になる（実測:
   % TOC 2パス目）。外側の空数式は直後に閉じるため、\@ignorefalse は
   % $ の直後で即時に実行すればカーネルと同一位置・同一意味になる。
-  \advance\@math@level\@ne
+  \pdftexja@math@levelup
   \check@mathfonts
   \the\everymath
   % 外側数式を閉じる（空数式; \mathsurround 1対はここに付く）
@@ -414,7 +422,7 @@
     % 空数式を1つだけ開いて閉じ、\mathsurround 1対をその中に置く。
     % \aftergroup は \leaders 干渉のため使用しない（raw 経路の注記参照））
     \pdftexja@dollar@plain
-      \advance\@math@level\@ne
+      \pdftexja@math@levelup
       \check@mathfonts
       \the\everymath
     \pdftexja@dollar@plain
