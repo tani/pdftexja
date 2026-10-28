@@ -1,0 +1,13 @@
+# pdftexja build outputs that are NOT version-controlled (plan §6.2):
+# font binaries and untracked sidecars are rebuilt at install/TDS time.
+# Tracked (NOT ignored): tex/*.cls, tex/*.clo, tex/pdftexja-jfm-*.def
+# (payloads + indexes for the 5 built-in presets, plan §5.1), profiles,
+# manifests, license/provenance texts.
+fonts/pdftexja/*.ttf
+fonts/pdftexja/*.tfm
+fonts/pdftexja/*.enc
+fonts/pdftexja/LICENSE-*.txt
+fonts/pdftexja/*-adv.def
+fonts/pdftexja/*-cid.def
+# TDS bundle
+tds/
