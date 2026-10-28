@@ -1641,10 +1641,19 @@
 }
 % \pdftexjaInsertionMetrics{body}: typeset body once with the insertion
 % logical-glyph metric mode on, restoring the previous mode afterwards.
+% The body is the WHOLE insertion material, so the paragraph is ended
+% INSIDE this group.  Ending it outside (at the \insert brace, as
+% \@makefntext's caller does) restored \leftskip/\parindent/\hsize to
+% the outer values before TeX broke the lines: the note paragraph then
+% lost the tate first-line indent (\leftskip = 1zw + the integral
+% correction, 23.99933pt at 10pt), i.e. the note-column head sat one
+% \leftskip too far toward the head (measured: note marker 16.00006pt
+% from the line head vs uplatex 39.99937pt).  \par in vertical mode is
+% a no-op, so bodies that already ended their paragraphs are unaffected.
 \long\def\pdftexjaInsertionMetrics#1{%
   \begingroup
     \global\advance\pdftexja@insctx\@ne
-    #1%
+    #1\par
     \global\advance\pdftexja@insctx\m@ne
   \endgroup}
 
