@@ -218,8 +218,37 @@ check-fonts:
 	$(PYTHON) tests/check-fonts.py $(FONTDIR) $(FONT_PROFILES) || exit 1; \
 	echo "check-fonts: deterministic regeneration + structural checks OK"
 
-check: check-jfm check-fonts
+check: check-jfm check-fonts check-uninstall
 	sh tests/run-tests.sh --texmf "$(PDFTEXJA_TEXMF)"
+
+# Class parity against the pinned LuaTeX-ja classes (needs lualatex + the
+# LuaTeX-ja reference classes from TeX Live).  Separate goal because it is
+# slower and depends on a reference implementation being installed.
+check-classes:
+	sh tests/run-class-tests.sh --texmf "$(PDFTEXJA_TEXMF)"
+
+# Uninstall safety: installing into two staged trees and uninstalling one must
+# leave the other (and any sentinel inside it) untouched, and the uninstaller
+# must refuse an empty/root target.
+check-uninstall:
+	@t1=`mktemp -d "$${TMPDIR:-/tmp}/pdftexja-un-a.XXXXXX"`; \
+	 t2=`mktemp -d "$${TMPDIR:-/tmp}/pdftexja-un-b.XXXXXX"`; \
+	 trap 'rm -rf "$$t1" "$$t2"' EXIT HUP INT TERM; \
+	 $(MAKE) -s install PDFTEXJA_TEXMF="$$t1" >/dev/null || exit 1; \
+	 $(MAKE) -s install PDFTEXJA_TEXMF="$$t2" >/dev/null || exit 1; \
+	 echo keep >"$$t2/tex/latex/pdftexja/SENTINEL"; \
+	 $(MAKE) -s uninstall PDFTEXJA_TEXMF="$$t1" >/dev/null || exit 1; \
+	 test ! -d "$$t1/tex/latex/pdftexja" || { echo "FAIL: uninstall left its own dir"; exit 1; }; \
+	 test -f "$$t2/tex/latex/pdftexja/SENTINEL" || { echo "FAIL: uninstall removed another tree"; exit 1; }; \
+	 test -f "$$t2/tex/latex/pdftexja/pdftexja.sty" || { echo "FAIL: other tree lost files"; exit 1; }; \
+	 if $(MAKE) -s uninstall PDFTEXJA_TEXMF="" >/dev/null 2>&1; then \
+	   echo "FAIL: uninstall accepted an empty target"; exit 1; fi; \
+	 echo "check-uninstall: sentinel preserved, own dirs removed, empty target refused"
+
+# Provenance: every INPUT of the staged foundation runs must live inside the
+# installed tree (mode `foundation`), not in a source checkout.
+check-inputs:
+	sh tests/staged-proof.sh --texmf "$(PDFTEXJA_TEXMF)"
 
 # ---------------------------------------------------------------------------
 # install / tds / uninstall

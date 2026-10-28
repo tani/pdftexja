@@ -1048,6 +1048,25 @@
   \else
     \global\pdftexja@evalclass=0
   \fi}
+% \pdftexjaGetPairGlue{<decimal cp A>}{<decimal cp B>}<skip> (public):
+% the NATURAL width of the pair between two code points at the current
+% Japanese size, i.e. the JFM pair natural (plus the kanjiskip companion
+% when the pair data asks for it).  Query only: the boundary state, the
+% active direction and the glyph machinery are untouched (the work runs in
+% a group and restores the scratch registers it needs).
+\def\pdftexjaGetPairGlue#1#2#3{%
+  \begingroup
+    \pdftexja@classofcp{#1}\pdftexja@evalpairglue@a=\pdftexja@evalclass
+    \pdftexja@classofcp{#2}\pdftexja@evalpairglue@b=\pdftexja@evalclass
+    \pdftexja@evalpairglue{\number\pdftexja@evalpairglue@a}%
+                          {\number\pdftexja@evalpairglue@b}%
+    #3=\pdftexja@nat\relax
+  \expandafter\endgroup
+  \expandafter#3=\the#3\relax
+}
+\newcount\pdftexja@evalpairglue@a
+\newcount\pdftexja@evalpairglue@b
+
 % \pdftexja@evalpairglue{<class-a>}{<class-b>}: set the pair glue
 % (natural only -- calc@jfmglue's contract is a skip natural) into
 % \pdftexja@nat via the SAME evaluation the runtime boundary uses.

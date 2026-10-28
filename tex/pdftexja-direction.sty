@@ -208,6 +208,31 @@
 \newdimen\pdftexja@page@H
 % page direction setter: active page direction + local direction + active
 % data prefix move together.
+% \pdftexjaIfPageDirectionTF{yoko|tate}{T}{F}: the direction of the page
+% being SHIPPED (the top of the page-direction stack), as opposed to
+% \pdftexjaIfDirectionTF which answers about the local text frame.
+\def\pdftexjaIfPageDirectionTF#1#2#3{%
+  \ifnum\pdfstrcmp{#1}{tate}=\z@
+    \ifnum\pdftexja@pagedir=\@ne
+      \let\pdftexja@next\@firstoftwo
+    \else
+      \let\pdftexja@next\@secondoftwo
+    \fi
+  \else
+    \ifnum\pdfstrcmp{#1}{yoko}=\z@
+      \ifnum\pdftexja@pagedir=\z@
+        \let\pdftexja@next\@firstoftwo
+      \else
+        \let\pdftexja@next\@secondoftwo
+      \fi
+    \else
+      \PackageError{pdftexja}{invalid direction `#1'}{%
+        Use~yoko~or~tate.\MessageBreak \@ehc}%
+      \let\pdftexja@next\@secondoftwo
+    \fi
+  \fi
+  \pdftexja@next{#2}{#3}}
+
 \def\pdftexja@setpagedir#1{%
   \global\pdftexja@pagedir=#1\relax
   \pdftexja@setdir{#1}}
