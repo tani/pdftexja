@@ -75,6 +75,21 @@ for fixture in standalone-yoko standalone-tate; do
     echo "FAIL: $fixture: compile" >&2; tail -12 "$WORK/run/$fixture.log" >&2
     fail=1; continue
   fi
+  # extraction: the SAME instrument the foundation gate uses (tests/pdf-text.py,
+  # PyMuPDF).  A missing/broken extractor must fail the proof, not pass it on a
+  # compile-only check.
+  if ! python3 "$REPO/tests/pdf-text.py" "$WORK/run/$fixture.pdf" \
+         >"$WORK/run/$fixture.txt" 2>"$WORK/run/$fixture.extract.err"; then
+    echo "FAIL: $fixture: extraction (pdf-text.py)" >&2
+    cat "$WORK/run/$fixture.extract.err" >&2
+    fail=1; continue
+  fi
+  # the fixture texts differ, so assert CJK content generally: at least one
+  # non-ASCII byte in the extracted text.
+  if ! LC_ALL=C grep -q '[^ -~]' "$WORK/run/$fixture.txt"; then
+    echo "FAIL: $fixture: extracted text has no non-ASCII (CJK) content" >&2
+    fail=1; continue
+  fi
   if python3 "$CHECKER" foundation "$WORK/run/$fixture.fls" "$TREE" - \
        "$REPO" "$REPO/../jlreq"; then
     echo "PASS: $fixture: provenance (installed tree only)"

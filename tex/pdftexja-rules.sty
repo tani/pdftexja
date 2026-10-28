@@ -726,7 +726,7 @@
 % it is an explicit unsupported error (never a silent no-op).
 \def\pdftexjaSetCharSpacing#1#2{%
   \ifpdftexja@afterpreamble
-    \PackageError{pdftexja}{\string\pdftexSetCharSpacing\space is preamble-only}{%
+    \PackageError{pdftexja}{\string\pdftexjaSetCharSpacing\space is preamble-only}{%
       Per-scalar spacing permissions select boundary behaviour and must be\MessageBreak
       declared before the document starts.\MessageBreak \@ehc}%
   \fi

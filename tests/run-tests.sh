@@ -433,6 +433,37 @@ else
     || fail "charspacing: wrong diagnostic for post-preamble call"
 fi
 
+# group-locality: the override ENTRY must be TeX-group-local.  The effect on
+# widths is not asserted here because the evaluator wiring is R6b (open), so a
+# width comparison would be vacuously equal.
+cat >"$WORK/run/csp-group.tex" <<'EOF'
+\documentclass{article}
+\usepackage[jfm=pdftexja-jfm-ujis.def]{pdftexja}
+\makeatletter
+{\pdftexjaSetCharSpacing{6F22}{none}%
+ \ifcsname pdftexja@charxsp@28450\endcsname
+   \typeout{CSPG:inner=set}\else\typeout{CSPG:inner=missing}\fi}
+\ifcsname pdftexja@charxsp@28450\endcsname
+  \typeout{CSPG:outer=set}\else\typeout{CSPG:outer=missing}\fi
+\makeatother
+\begin{document}
+x
+\end{document}
+EOF
+if ( cd "$WORK/run" && stage_env pdflatex -no-shell-escape -interaction=nonstopmode \
+       -halt-on-error csp-group.tex >csp-group.log 2>&1 ); then
+  gi=$(sed -n 's/^CSPG:inner=\(.*\)$/\1/p' "$WORK/run/csp-group.log" | head -1)
+  go=$(sed -n 's/^CSPG:outer=\(.*\)$/\1/p' "$WORK/run/csp-group.log" | head -1)
+  if [ "$gi" = "set" ] && [ "$go" = "missing" ]; then
+    pass "charspacing: override entry is group-local"
+  else
+    fail "charspacing: grouping leaked (inner=$gi outer=$go)"
+  fi
+else
+  fail "charspacing: group-locality compile"
+  tail -6 "$WORK/run/csp-group.log" >&2
+fi
+
 # --- error paths: unknown setup key and unsupported engine gate ---------
 check
 cat >"$WORK/run/err-unknown-key.tex" <<'EOF'

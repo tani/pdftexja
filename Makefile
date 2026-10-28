@@ -254,6 +254,7 @@ check-uninstall:
 # Provenance: every INPUT of the staged foundation runs must live inside the
 # installed tree (mode `foundation`), not in a source checkout.
 check-inputs:
+	python3 tests/check-inputs-cases.py
 	sh tests/staged-proof.sh --texmf "$(PDFTEXJA_TEXMF)"
 
 # ---------------------------------------------------------------------------
