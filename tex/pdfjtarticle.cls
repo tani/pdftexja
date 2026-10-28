@@ -814,7 +814,7 @@
 \normalmarginpar
 \@mparswitchfalse
 \AddToHook{package/ftnright/before}{\let\pdfj@orig@@makefntext=\@makefntext}
-\AddToHook{package/ftnright/after-load}{\let\@makefntext=\pdfj@orig@@makefntext}
+\AddToHook{package/ftnright/after}{\let\@makefntext=\pdfj@orig@@makefntext}
 \endinput
 %%
 %% End of file `pdfjtarticle.cls'.

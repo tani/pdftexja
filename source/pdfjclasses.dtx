@@ -4722,7 +4722,9 @@
 %    \begin{macrocode}
 %<*article|report|book>
 \AddToHook{package/ftnright/before}{\let\pdfj@orig@@makefntext=\@makefntext}
-\AddToHook{package/ftnright/after-load}{\let\@makefntext=\pdfj@orig@@makefntext}
+% `package/<name>/after-load' is not a LaTeX hook (only /before and
+% /after exist); code added to it is stored but never run.
+\AddToHook{package/ftnright/after}{\let\@makefntext=\pdfj@orig@@makefntext}
 %</article|report|book>
 %    \end{macrocode}
 %

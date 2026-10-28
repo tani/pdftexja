@@ -179,6 +179,10 @@
 \def\pdfjclass@seireki@true{\pdfjclass@seirekitrue}
 \def\pdfjclass@seireki@false{\pdfjclass@seirekifalse}
 \newcount\pdfjclass@heisei \pdfjclass@heisei\year \advance\pdfjclass@heisei-1988\relax
+% public pLaTeX/LuaTeX-ja names: \heisei is the same register.  The
+% conditional \if西暦 has no 8-bit spelling (it tokenizes as the \if
+% primitive); \ifpdfjclass@seireki is its ASCII equivalent.
+\@ifundefined{heisei}{\let\heisei\pdfjclass@heisei}{}
 \def\pdfjclass@today@year@#1{%
   \ifnum\numexpr\year-#1=1 元\else
     \pdftexjaIfDirectionTF{tate}{\kansuji\numexpr\year-#1\relax}%
@@ -192,6 +196,8 @@
   \else
     令和\pdfjclass@today@year@{2018}%
   \fi\fi}
+\let\pltx@today@year@\pdfjclass@today@year@
+\let\pltx@today@year\pdfjclass@today@year
 \def\pdfjclass@today@ja{%
   \ifpdfjclass@seireki
     \pdftexjaIfDirectionTF{tate}{\kansuji\year}{\number\year\nobreak}年
@@ -242,7 +248,13 @@
       {\@outputbox@append{\@textbottom}\let\@textbottom\relax}%
       {}%
     \@outputbox@appendfootnotes}%
-}{}
+}{%
+  % Pre-2025 formats: the classes keep the original \fnfixbottomtrue +
+  % stfloats \fnbelowfloat branch.  The flag is declared by pLaTeX and
+  % LuaTeX-ja (lltjcore), not by pdfLaTeX, so declare it here.  Only the
+  % flag is provided; lltjcore's \@makecol fil-glue patch is not ported.
+  \@ifundefined{iffnfixbottom}{\newif\iffnfixbottom}{}%
+}
 
 % The helper is \input from a class file, where `@' must remain a
 % letter for the rest of the class; do not \makeatother here.
