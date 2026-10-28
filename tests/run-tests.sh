@@ -96,8 +96,12 @@ log_absent() {
   fi
 }
 
+# Extraction uses PyMuPDF, not pdftotext: tate pages are a rotated galley in
+# a portrait page and pdftotext drops them (measured 0 characters on
+# standalone-tate.pdf while PyMuPDF returns the full text).  This is a change
+# of measuring instrument, not of the acceptance threshold.
 pdftext_has() {
-  ( cd "$WORK/run" && stage_env pdftotext -enc UTF-8 "$1.pdf" - 2>/dev/null ) \
+  ( cd "$WORK/run" && python3 "$REPO/tests/pdf-text.py" "$1.pdf" 2>/dev/null ) \
     >"$WORK/run/$1.txt"
   if grep -qF -- "$2" "$WORK/run/$1.txt"; then
     pass "$1: extracted text contains '$2'"
@@ -107,6 +111,8 @@ pdftext_has() {
 }
 
 pdftext_absent() {
+  [ -s "$WORK/run/$1.txt" ] || ( cd "$WORK/run" && \
+    python3 "$REPO/tests/pdf-text.py" "$1.pdf" 2>/dev/null ) >"$WORK/run/$1.txt"
   if grep -qF -- "$2" "$WORK/run/$1.txt"; then
     fail "$1: extracted text unexpectedly contains '$2'"
   else

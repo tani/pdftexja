@@ -25,7 +25,7 @@
 
 | # | 症状 | 実測 | 原因の所在（帰属） |
 |---|---|---|---|
-| R4 | 縦組ページのテキスト抽出が空 | `standalone-tate` の `pdftext_has` 3 件 FAIL（compile 0 error、glyph は正常） | **未帰属**。まず計測器（pdftotext の回転フィルタ）か描画（`/XObject` CTM・ToUnicode）かを切り分ける。`tests/run-tests.sh` の `pdftext_has` + `tex/pdftexja-direction.sty` の shipout 回転（JLREQ 相当: 旧 `jlreq-pdftex.sty:654-692`） |
+| R4 | 縦組ページのテキスト抽出が空 | **解決済み・計測器の欠陥だった**: `standalone-tate.pdf` から pdftotext は 0 文字、PyMuPDF は 115+13 文字（見出し・本文・括弧・TCY 数字・数式すべて）を返す。原因は pdftotext の回転レイアウト除去で、描画/ToUnicode は正常 | `tests/run-tests.sh` の抽出を `tests/pdf-text.py`（PyMuPDF）へ交換（閾値変更ではなく計測器の交換）。以後 3 件とも PASS |
 | R5 | 独自 preset で `\begin{document}` の数値走査エラー | tiny preset（role 17/34/83/201/202）で `Missing number <to be read again> =` | `tex/pdftexja-rules.sty` の class 表構築（`\pdftexja@jfm@tables` / `\pdftexja@loadclass`）と `direction` のページ初期化。role が default skip を持たないことが引き金（generator 側で全 class に既定を出すのが本筋） |
 | R6 | `\pdftexjaSetCharSpacing` が存在しない | JS の `！〒+%`、doc の `\ "` が**警告付き no-op**（`tex/pdftexja-class.def:213-224` が `\@ifundefined` 経由で呼ぶ） | API 未実装。`tex/pdftexja-rules.sty` の `\pdftexja@ifxsp` に公開上書き層が無い（plan §5.3 の契約） |
 | R7 | UTF-8 dispatcher が全滅 | `\　`(U+3000) で `! Package pdftexja Error: unknown command spelling`。`和暦/西暦` は登録成功するが dispatch 不可 | `tex/pdftexja-latex.sty:179-230`: `@utf@listgrab` は候補を `{残り}{target}` の入れ子で積むが `@utf@choose@a/b` は平坦 2 トークンとして読み、`@utf@match` は候補枯渇時に捨てる |
