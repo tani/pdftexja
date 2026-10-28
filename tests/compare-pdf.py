@@ -43,6 +43,12 @@ except ImportError:  # older bindings
         sys.exit(2)
 
 
+# Error band for break positions, in characters (cells).  The two sides use
+# different font metrics by design (metric compatibility is NOT required), so
+# a line may absorb one more/fewer cell; anything larger is a layout defect.
+CELL_TOL = 2
+
+
 def norm_text(s):
     # NFKC folds the vertical presentation forms (U+FE10..FE19) onto
     # their nominal characters; the semantic text is identical.
@@ -61,6 +67,22 @@ def page_lines(page):
                 continue
             out.append((txt, tuple(line.get("bbox", (0, 0, 0, 0))), bi))
     return out
+
+
+def line_cells(lines):
+    """Per-line character counts, i.e. where the breaks fell -- measured in
+    CHARACTERS, not points, so it is independent of the font metrics/TFMs in
+    use (the body is rigid CJK: one cell per character)."""
+    return [len(norm_text(t)) for t, _, _ in lines]
+
+
+def column_cells(lines):
+    """tate: glyphs grouped into columns by x-cluster, counted per column."""
+    groups = {}
+    for t, b, _ in lines:
+        groups.setdefault(round(b[0], 1), 0)
+        groups[round(b[0], 1)] += len(norm_text(t))
+    return [groups[k] for k in sorted(groups)]
 
 
 def grid_pitch(lines, tate):
@@ -152,8 +174,39 @@ def main(argv):
             na, nb = len(la), len(lb)
             if abs(na - nb) > max(4, int(0.03 * max(na, nb))):
                 fail("page %d: glyph-cell count %d vs %d" % (i + 1, na, nb))
+            # Column contents in CHARACTERS: the tate analogue of the yoko
+            # per-line break check, still metric-free.
+            ka, kb = column_cells(la), column_cells(lb)
+            if len(ka) == len(kb):
+                worst = max((abs(x - y) for x, y in zip(ka, kb)), default=0)
+                if worst > CELL_TOL:
+                    for k, (x, y) in enumerate(zip(ka, kb)):
+                        if abs(x - y) > CELL_TOL:
+                            fail("page %d column %d: %d vs %d cells (band %d)"
+                                 % (i + 1, k + 1, x, y, CELL_TOL))
+                            break
+                else:
+                    print("INFO: %s: page %d column band max %d cell(s)"
+                          % (label, i + 1, worst))
         elif len(la) != len(lb):
             fail("page %d: line count %d vs %d" % (i + 1, len(la), len(lb)))
+        else:
+            # Break positions measured in CHARACTERS: metric-free, but NOT
+            # metric-identical -- the two sides use different font metrics, so
+            # a line may hold one cell more or less.  CELL_TOL is the stated
+            # error band ("agrees within error"); a real layout defect moves
+            # breaks much further or changes the line count.
+            ca, cb = line_cells(la), line_cells(lb)
+            worst = max((abs(x - y) for x, y in zip(ca, cb)), default=0)
+            if worst > CELL_TOL:
+                for k, (x, y) in enumerate(zip(ca, cb)):
+                    if abs(x - y) > CELL_TOL:
+                        fail("page %d line %d: %d vs %d characters (band %d)"
+                             % (i + 1, k + 1, x, y, CELL_TOL))
+                        break
+            else:
+                print("INFO: %s: page %d break band max %d cell(s)"
+                      % (label, i + 1, worst))
         ga, gb = (None, None) if tate else (grid_pitch(la, tate), grid_pitch(lb, tate))
         if ga is not None and gb is not None and abs(ga - gb) > tol:
             fail("page %d: line grid %.3f vs %.3f pt" % (i + 1, ga, gb))
@@ -166,6 +219,15 @@ def main(argv):
             k += 1
         fail("text differs at character %d: ours %r vs reference %r"
              % (k, ta[k:k + 12], tb[k:k + 12]))
+
+    # "later half" report: the last page's break pattern, so a divergence in
+    # the body tail is visible even when page 1 is dominated by headings
+    if len(doc_a) and len(doc_b):
+        ia = len(doc_a) - 1
+        ta_cells = line_cells(page_lines(doc_a[ia]))
+        tb_cells = line_cells(page_lines(doc_b[ia]))
+        print("INFO: %s: last page break pattern ours=%s ref=%s"
+              % (label, ta_cells[:6], tb_cells[:6]))
 
     if failures:
         for f in failures:
